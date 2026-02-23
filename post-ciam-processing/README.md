@@ -2,22 +2,12 @@
 
 This directory contains scripts to process pyCIAM coastal damage model outputs into integration-ready datasets for the Regional SCC pipeline.
 
-## Overview
-
 These scripts convert raw CIAM outputs (total damages per coastal segment) into per-capita damages binned by GMSL, year, SSP, and growth model.
 
 **Key features:**
 - Batch processing for memory handling (500MB per batch instead)
-- Does NOT include VSL (Value of Statistical Life) adjustments
-- Simplified adaptation of the original notebook
-
-**Original source:**
-https://gitlab.com/ClimateImpactLab/coastal/projects/glo-co/-/blob/master/code/pipeline/data_processing/pyCIAM/post-CIAM/process-projected-pyCIAM-damages.ipynb
-
-## Author
-
-Sebastian Cadavid-Sanchez | Climate Impact Lab (CIL)
-cadavidsanchez@uchicago.edu
+- Does NOT include VSL (Value of Statistical Life)
+- Simplified adaptation of the original [notebook](https://gitlab.com/ClimateImpactLab/coastal/projects/glo-co/-/blob/master/code/pipeline/data_processing/pyCIAM/post-CIAM/process-projected-pyCIAM-damages.ipynb)
 
 ## Files
 

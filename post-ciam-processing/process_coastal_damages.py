@@ -17,9 +17,6 @@ Key differences from the original:
 - Uses batch processing for memory efficiency
 - Simplified for standalone execution
 
-Author: Sebastian Cadavid-Sanchez | Climate Impact Lab (CIL)
-Email: cadavidsanchez@uchicago.edu
-
 Runtime: approx. 3.5 hours for all 3 scenarios on:
     - Platform: https://notebooks.cilresearch.org/
     - CPU: Intel Xeon @ 2.20GHz (8 cores)
@@ -84,7 +81,7 @@ ADAPTATION_SCENARIOS = {
 OUTPUT_BASE = 'gs://impactlab-data/coastal/local-scc-model/results/formatted_regional_scc'
 OUTPUT_BASE_TEST = 'gs://impactlab-data/coastal/local-scc-model/results/formatted_regional_scc_test'
 
-# Batch size for memory-efficient processing
+# Batch size for processing
 BATCH_SIZE = 100
 
 
@@ -207,7 +204,7 @@ def build_slr_to_scen_mc_mapping(slr_scenario: xr.DataArray,
 
     The pyCIAM outputs are indexed by 'scen_mc' which combines scenario and
     sample (e.g., 'ssp585_wf_1e_15372'). This function builds lookup arrays
-    to efficiently map from the (year, batch, slr) dimensions to the
+    to map from the (year, batch, slr) dimensions to the
     corresponding scen_mc indices.
 
     scen_mc formats:
