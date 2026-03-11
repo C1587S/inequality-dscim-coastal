@@ -70,12 +70,6 @@ All paths and parameters are defined in `config.py`:
 | SLIIDERS | `gs://impactlab-data/coastal/local-scc-model/data/int/sliiders-ir.zarr` |
 | Surge lookup | `gs://impactlab-data/coastal/local-scc-model/data/int/surge-lookup/` |
 
-## Runtime
-
-On the CIL notebooks compute cluster with 40-800 Dask workers:
-- Step 1 (SLR processing): ~30 minutes
-- Step 2 (pyCIAM): ~4-6 hours
-
 ## Dependencies
 
 ```
