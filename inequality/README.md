@@ -1,6 +1,6 @@
 # Inequality pyCIAM Inputs
 
-This folder contains the notebooks and configuration needed to produce pyCIAM coastal damage estimates for the inequality analysis using temperature-limit (GWL) scenarios.
+This folder contains the notebooks and configuration needed to produce pyCIAM coastal damage estimates required for the [inequality analysis](https://gitlab.com/ClimateImpactLab/Impacts/inequality) using temperature-limit (GWL) scenarios.
 
 ## Output Format
 
