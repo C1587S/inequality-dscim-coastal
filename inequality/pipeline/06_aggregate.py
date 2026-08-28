@@ -1,20 +1,17 @@
 """
 Stage 6: aggregate to the final outputs, per --scenario.
 
-From the stage-4/5 store: filter to the output cases, years, and SSPs; sum
-from seg_ir to impact_region; rename the IAMs to the published labels; then
-derive the two downstream views:
+Filters the stage-4/5 store to the output cases, years and SSPs, sums seg_ir
+to impact_region, renames the IAMs, then derives two views: gadmid (integer
+region ids) and gadmid_coastal (subset to the original run's regions, which
+drops ~1,500 inland-water ones). The impact_region store is the canonical
+output.
 
-- gadmid: impact_region strings (IR_XXXXX) mapped to integer gadmids
-- gadmid_coastal: gadmid store subset to the regions of the original run,
-  dropping the ~1,500 inland-water regions the updated SLIIDERS added
+Before any of that it counts nulls in the seg_ir store and refuses to run if
+there are any, because the skipna aggregation would turn them into zeros.
 
-The impact_region-level store is the canonical output; the views are derived
-from it. The published glocal run only ever got the gadmid view without the
-coastal subset — this stage applies the full chain to every scenario.
-
-Every target is skipped if it already exists, so the surviving production
-stores are never clobbered; pass --overwrite to rebuild deliberately.
+Existing targets are skipped, so published stores are never clobbered.
+--overwrite rebuilds them deliberately.
 
 Run on the hub:
   test:  python -u 06_aggregate.py --scenario glocal --test
@@ -55,10 +52,9 @@ AGG_CHUNKSIZE = 2
 def check_complete(tmp_path):
     """Refuse to aggregate an incomplete store.
 
-    This gate must run BEFORE aggregation: the groupby sum is skipna, so NaN
-    seg contributions silently become zeros at impact_region level — the
-    suspected flaw in the published v2 noAdaptation case. The legacy runs'
-    post-aggregation assert could not catch it.
+    The groupby sum is skipna, so null seg cells become zeros at
+    impact_region level. That is how the published v2 stores went wrong, and
+    no post-aggregation check can see it, so this runs first.
     """
     t = xr.open_zarr(str(tmp_path)).costs.sel(
         case=OUTPUT_CASES, ssp=OUTPUT_SSPS, year=OUTPUT_YEARS

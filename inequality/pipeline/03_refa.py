@@ -1,16 +1,13 @@
 """
-Stage 3: reference adaptation heights (refA), shared by all scenarios.
+Stage 3: reference adaptation heights (refA).
 
-refA is the present-day adaptation height per segment, found by optimising
-pyCIAM under the no-climate-change scenario (local VLM only). It is computed
-from the seg-level store, which is identical for every rho treatment (see
-config.py), so this stage runs once and has no --scenario flag; every
-scenario's calc stage reads the same store.
+refA is the present-day adaptation height per segment, optimised under no
+climate change. It comes from the seg store, which is the same for every
+scenario (see config.py), so this runs once and has no --scenario flag.
 
-Restartable: a rerun inspects the store and recomputes only groups containing
-null cells, so filling holes after a crash costs minutes, not the full run.
-The completion gate is the store's exact null count — task-attempt errors that
-were superseded by batch retries do not fire it.
+A rerun recomputes only the groups with null cells, so filling holes after a
+crash takes minutes. The completion gate is the store's exact null count;
+task errors that a retry already fixed don't fire it.
 
 Run on the hub:
   test:  python -u 03_refa.py --test    (needs the 01 --test store)

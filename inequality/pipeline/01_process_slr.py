@@ -2,30 +2,28 @@
 Stage 1: build the tlim SLR stores.
 
 Reduces the 20,000 AR6 FACTS draws per scenario x workflow to 1,000
-rank-quantile samples (500 per workflow, stacked) and writes two stores:
+rank-quantile samples, 500 per workflow, and writes two stores.
 
-- base (PATH_SLR), with three variables:
-    lsl_msl05      local sea level, total workflow (climate components,
-                   gravitationally fingerprinted, plus vertical land motion)
-    lsl_ncc_msl05  the Kopp14 vertical-land-motion component alone; the
-                   no-climate-change counterfactual
-    gsl_msl05      global-mean sea level from the AR6 global workflows
-                   (climate-driven components only, no VLM, no site dimension)
+The base store (PATH_SLR) has three variables:
+    lsl_msl05      local sea level for the total workflow: fingerprinted
+                   climate components plus vertical land motion
+    lsl_ncc_msl05  the Kopp14 vertical-land-motion component alone, which is
+                   the no-climate-change counterfactual
+    gsl_msl05      global-mean sea level from the AR6 global workflows; no
+                   VLM, no site dimension
 
-- globalclimate variant (PATH_SLR_GLOBALCLIMATE): identical layout, but
-    lsl_msl05 := gsl_msl05 + lsl_ncc_msl05
-  i.e. a spatially uniform climate signal on top of each site's local vertical
-  land motion. gsl carries no VLM and lsl_ncc carries nothing but VLM, so the
-  sum double-counts nothing. Point the "global" scenario run at this store;
-  pyCIAM needs no changes.
+The globalclimate variant (PATH_SLR_GLOBALCLIMATE) has the same layout with
+lsl_msl05 = gsl_msl05 + lsl_ncc_msl05: a uniform climate signal on top of
+each site's own land motion. gsl has no VLM and lsl_ncc has nothing else, so
+nothing is double-counted. The "global" scenario runs against this store and
+pyCIAM needs no changes.
 
-Sample caveat: the 1,000 samples are rank quantiles computed independently for
-the local, global, and VLM series, so sample n is rank-matched across series,
-not a single physical FACTS draw. Carry this caveat into any description of
-scenarios built from these stores.
+One caveat. The local, global, and VLM series are quantiled independently,
+so sample n is the rank-n quantile of each series, not a single FACTS draw.
+Carry that into any description of scenarios built from these stores.
 
-The quantile draws are seeded (config.SEED), so a rebuilt base store matches
-the one used in the 2026 production runs.
+The draws are seeded (config.SEED), so a rebuild matches the store used in
+the 2026 production runs.
 
 Run on the hub:
   test:  python -u 01_process_slr.py --test

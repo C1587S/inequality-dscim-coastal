@@ -1,13 +1,11 @@
 """
-Stage 4: calc_all_cases — the long stage (~19-24h at 600 workers).
+Stage 4: costs for every adaptation case, per --scenario. The long stage,
+roughly a day at 600 workers.
 
-Computes costs for every adaptation case, per --scenario. The output template
-covers six SLR scenarios: the five tlim scenarios from the SLR store plus
-ncc_ar6, which pyCIAM generates internally from the no-climate-change series.
-
-Tasks run with check=True, so completed (segment, sample) groups are skipped:
-rerunning this script after a crash gap-fills the store. Pass --overwrite to
-discard an existing store and start fresh.
+The output covers six SLR scenarios: the five tlims from the SLR store plus
+ncc_ar6, which pyCIAM builds from the no-climate-change series. Tasks check
+the store before computing, so a rerun after a crash fills only the gaps.
+--overwrite starts the store fresh.
 
 Run on the hub:
   test:  python -u 04_calc_cases.py --scenario glocal --test

@@ -185,15 +185,14 @@ def zarr_exists(path):
 
 
 def clean_for_zarr(ds):
-    """Clear encodings and coerce string coords to fixed-width unicode so
+    """Clear encodings and coerce string coords to fixed-width unicode, so
     stores write as zarr v2 with the same coordinate dtypes as the published
     stores.
 
-    Handles both object arrays (kind "O", what the legacy stack produced) and
-    numpy 2's variable-width StringDType (kind "T", what zarr-python 3 now
-    returns for string arrays), which cannot be cast to unspecified-width
-    unicode. Building from the Python strings sizes the fixed width to the
-    longest value, so values round-trip identically either way.
+    Handles object arrays (the old stack) and numpy 2's StringDType (what
+    zarr-python 3 now returns), which can't be cast to unspecified-width
+    unicode. Rebuilding from the Python strings works for both and sizes the
+    width to the longest value.
     """
     import numpy as np
     import xarray as xr

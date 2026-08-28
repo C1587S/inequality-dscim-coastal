@@ -1,23 +1,17 @@
 """
 Stage 2: prepare the SLIIDERS economic inputs.
 
-Writes three stores, each skipped if it already exists:
+Writes three stores, skipping any that already exist:
 
-- local-rho IR store: the base SLIIDERS with variable names normalised
-  (K_2014 -> K_2019, pop_2014 -> pop_2019, the labels pyCIAM's collapse
-  expects). Feeds the fulladapt run.
+- local-rho IR store: base SLIIDERS with K_2014/pop_2014 renamed to the 2019
+  labels the collapse expects. Feeds fulladapt.
 - global-rho IR store: the same, with rho replaced by its population-weighted
-  global average over 2000-2014, expanded to all countries and years. Feeds
-  the glocal and global runs.
-- seg-level store: the IR store collapsed to segments, used only by refA.
-  Built once and shared by all scenarios: the collapse recomputes rho from
-  ypcc (pyCIAM/utils.py:268), discarding the rho variable of whichever IR
-  store it is fed, so both variants collapse to the same thing. This
-  reproduces the published runs, where refA always reflects local income.
+  global average over 2000-2014. Feeds glocal and global.
+- seg store: the IR store collapsed to segments, used only by refA. One copy
+  serves every scenario, because the collapse recomputes rho from ypcc and
+  discards the variant (pyCIAM/utils.py:268).
 
-Everything loads into hub memory; no cluster needed. Runs in minutes.
-
-Run on the hub:
+No cluster needed; runs in minutes on the hub:
   python -u 02_prepare_inputs.py
 """
 

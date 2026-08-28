@@ -1,17 +1,12 @@
 """
-Stage 5: pick the optimal adaptation case per segment (~1h at 600 workers).
+Stage 5: pick the optimal adaptation case per segment, per --scenario.
+About an hour at 600 workers.
 
-For each segment, compares the NPV of the solved cases written by stage 4 and
-writes the winner into the store's optimalfixed slot, in sample groups of 250
-(matching the production runs).
-
-Simplified from the legacy scripts: optimize_case ignores its positional
-wait-futures arguments (pyCIAM/run.py:1589) and looks up sibling seg_ir values
-from the econ store itself, so the group-id bookkeeping the old scripts
-carried is unnecessary — tasks are just (seg_ir, sample group) pairs.
-
-Tasks run with check=True, so rerunning after a crash skips completed
-segments.
+Compares the NPV of the cases stage 4 wrote and fills the optimalfixed slot,
+in sample groups of 250. Tasks are plain (seg_ir, sample group) pairs:
+optimize_case ignores its wait-futures arguments (pyCIAM/run.py:1589) and
+finds sibling segments itself, so the legacy group bookkeeping is gone.
+A rerun skips completed segments.
 
 Run on the hub:
   test:  python -u 05_optimize.py --scenario glocal --test

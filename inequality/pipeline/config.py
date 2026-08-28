@@ -86,23 +86,19 @@ SLIIDERS_IR = {
     "glocal": _SLIIDERS_GLOBAL_RHO,
     "global": _SLIIDERS_GLOBAL_RHO,
 }
-# The seg-level store and refA are shared by all three scenarios.
-# collapse_econ_inputs_to_seg recomputes rho from ypcc (pyCIAM/utils.py:268),
-# discarding the rho variable of whichever IR store it is fed, so the seg
-# store is identical for every rho treatment — and refA, which is optimised
-# from it under the no-climate-change scenario (local VLM, identical in both
-# SLR stores), is too. Present-day adaptation (refA) always reflects local
-# income, as in Ian's original run-all-adaptation-scens.ipynb design. The rho
-# variants only reach the main cost calculation, which reads rho from the IR
-# store.
+# One seg store and one refA serve all three scenarios. The collapse
+# recomputes rho from ypcc (pyCIAM/utils.py:268) and discards the store's
+# rho, and our scenarios never touch ypcc, so every variant collapses to the
+# same seg store and the same refA. refA is optimised under no climate
+# change, where both SLR stores are identical anyway. This matches Ian's
+# original design: present-day adaptation reflects local income. Rho reaches
+# the model only through the main cost calculation, which reads the IR store.
 #
-# Checked against the published outputs (Aug 2026, pipeline/checks/): the two
-# stores' noAdaptation cases do NOT agree cell-for-cell, but the divergence
-# is one-sided incompleteness of the published fulladapt store (failed refA
-# groups aggregated as zeros; 349M vs 38M asymmetric zero cells, 3,056 vs 1
-# all-zero regions), not refA responding to rho. Definitive confirmation:
-# after the fulladapt rerun, its noAdaptation non-storm costs should match
-# the published glocal store exactly wherever glocal has no holes.
+# Checked against the published outputs (Aug 2026). They disagree cell for
+# cell, but the cause is missing data in the published stores, not refA
+# responding to rho (see README). Final confirmation comes with the rerun:
+# v3 fulladapt should match published glocal on non-storm noAdaptation costs
+# wherever glocal has no holes.
 PATH_SLIIDERS_SEG = DIR_SCRATCH / "sliiders" / "seg.zarr"
 PATH_REFA = DIR_SCRATCH / "refa" / "refa.zarr"
 SLR = {
@@ -118,10 +114,9 @@ PATH_INTERMEDIATE = {
 # =============================================================================
 # FINAL OUTPUTS
 # =============================================================================
-# v3 = the complete-refA generation. The published v2 stores have incomplete
-# noAdaptation cases (see README) and are deliberately left in place,
-# documented as defective: overwriting them would silently change data under
-# their consumers. New outputs get new names; consumers migrate knowingly.
+# v3 outputs. The published v2 stores have incomplete noAdaptation cases
+# (see README) and stay in place so nothing changes under their readers; the
+# corrected outputs get new names.
 _DIR_OUTPUTS = AnyPath("gs://impactlab-data/gcp/outputs/coastal")
 PATH_FINAL = {
     "fulladapt": _DIR_OUTPUTS / "pyCIAM_outputs_inequality_1000_ssp234_v3.zarr",
@@ -130,11 +125,10 @@ PATH_FINAL = {
     / "pyCIAM_outputs_inequality_1000_ssp234_v3_global_income_climate.zarr",
 }
 
-# Derived views of the final store: gadmid-labelled, and gadmid subset to the
-# regions of the original run (dropping ~1,500 inland-water regions). The
-# published glocal run only ever got the gadmid view (7,430 regions, no
-# coastal subset); the aggregate stage applies the full chain to every
-# scenario.
+# Views of the final store: gadmid-labelled, then subset to the original
+# run's regions, which drops ~1,500 inland-water ones. The published glocal
+# store never got the coastal subset; stage 6 applies the full chain to
+# every scenario.
 def _derived(path, suffix):
     return path.parent / path.name.replace(".zarr", f"_{suffix}.zarr")
 
