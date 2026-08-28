@@ -59,27 +59,31 @@ def per_costtype_stats(full, gloc):
         both_nan = a.isnull() & b.isnull()
         nan_mismatch = a.isnull() != b.isnull()
         equal = (a == b) | both_nan
-        diff = ~equal & ~nan_mismatch
+        differs = ~equal & ~nan_mismatch
         both_zero = (a == 0) & (b == 0)
         absdiff = abs(a - b)
-        rel = absdiff / np.maximum(abs(a), abs(b))
+        # NaN denominator where both values are zero, so the division neither
+        # warns nor counts in the rel buckets (such cells are equal anyway)
+        denom = np.maximum(abs(a), abs(b))
+        rel = absdiff / denom.where(denom > 0)
         stats = xr.Dataset(
             {
-                "nan_mismatch": nan_mismatch.sum(),
-                "both_zero": both_zero.sum(),
-                "equal_nonzero": (equal & ~both_zero & ~both_nan).sum(),
-                "diff": diff.sum(),
-                "rel_1e6": (diff & (rel > 1e-6)).sum(),
-                "rel_1e3": (diff & (rel > 1e-3)).sum(),
-                "rel_10pct": (diff & (rel > 0.1)).sum(),
+                "n_nan_mismatch": nan_mismatch.sum(),
+                "n_both_zero": both_zero.sum(),
+                "n_equal_nonzero": (equal & ~both_zero & ~both_nan).sum(),
+                "n_diff": differs.sum(),
+                "n_rel_1e6": (differs & (rel > 1e-6)).sum(),
+                "n_rel_1e3": (differs & (rel > 1e-3)).sum(),
+                "n_rel_10pct": (differs & (rel > 0.1)).sum(),
                 "max_absdiff": absdiff.max(),
             }
         ).compute()
         print(
-            f"  {ct:<16} {int(stats.nan_mismatch):>12} {int(stats.both_zero):>12} "
-            f"{int(stats.equal_nonzero):>14} {int(stats.diff):>12} "
-            f"{int(stats.rel_1e6):>10} {int(stats.rel_1e3):>10} "
-            f"{int(stats.rel_10pct):>10} {float(stats.max_absdiff):>12.4g}"
+            f"  {ct:<16} {int(stats['n_nan_mismatch']):>12} "
+            f"{int(stats['n_both_zero']):>12} {int(stats['n_equal_nonzero']):>14} "
+            f"{int(stats['n_diff']):>12} {int(stats['n_rel_1e6']):>10} "
+            f"{int(stats['n_rel_1e3']):>10} {int(stats['n_rel_10pct']):>10} "
+            f"{float(stats['max_absdiff']):>12.4g}"
         )
 
 
