@@ -7,8 +7,10 @@ from the seg-level store, which is identical for every rho treatment (see
 config.py), so this stage runs once and has no --scenario flag; every
 scenario's calc stage reads the same store.
 
-Rerunning after a crash recomputes all groups (get_refA has no completed-work
-check); at roughly 1.3h for the full run that is acceptable.
+Restartable: a rerun inspects the store and recomputes only groups containing
+null cells, so filling holes after a crash costs minutes, not the full run.
+The completion gate is the store's exact null count — task-attempt errors that
+were superseded by batch retries do not fire it.
 
 Run on the hub:
   test:  python -u 03_refa.py --test    (needs the 01 --test store)
@@ -101,12 +103,19 @@ def main():
     ciam_in = load_ciam_in("fulladapt", test=args.test)
     segs = np.unique(ciam_in.seg)
 
-    if args.overwrite or not zarr_exists(refa_path):
+    resuming = not args.overwrite and zarr_exists(refa_path)
+    if not resuming:
         write_template(refa_path, segs, samples)
-    else:
-        print(f"resuming into existing store {refa_path} (all groups recomputed)")
 
     groups = list(product(chunked(segs, REFA_SEG_CHUNKSIZE), chunked(samples, SAMPLE_CHUNKSIZE)))
+    if resuming:
+        # fill only the holes: get_refA has no completed-work check, so
+        # restrict the task list to groups whose cells contain nulls
+        isnull = xr.open_zarr(str(refa_path)).refA.isnull().compute()
+        groups = [
+            g for g in groups if bool(isnull.sel(seg=g[0], sample=g[1]).any())
+        ]
+        print(f"resuming: {len(groups)} groups with null cells to fill")
     print(f"refA groups: {len(groups)}")
 
     cluster = Cluster(n_workers)
@@ -130,26 +139,31 @@ def main():
     n_ok, n_err = run_batched(cluster, make_futures, groups, REFA_BATCH_SIZE, "refA")
     timings = {"refA": time.time() - t0}
 
+    # gate on the store, not on task attempts: n_err counts failed attempts,
+    # some of which are superseded by batch retries; the exact null count is
+    # the ground truth
     refa = xr.open_zarr(str(refa_path))
-    pct = float(refa.refA.notnull().mean()) * 100
-    print(f"refA non-null: {pct:.1f}%")
+    n_null = int(refa.refA.isnull().sum())
+    print(f"refA null cells: {n_null} of {refa.refA.size} ({n_err} task errors)")
+    if n_err and not n_null:
+        print(f"note: all {n_err} task errors were superseded by retries")
 
     write_report(
         "03_refa" + ("_test" if args.test else ""),
         timings,
         n_ok=n_ok,
         n_err=n_err,
-        pct_nonnull=pct,
+        n_null=n_null,
         refa_store=str(refa_path),
     )
     cluster.close()
     # NaN refA holes propagate as NaN noAdaptation costs that the aggregation
-    # silently zeros — the suspected flaw in the published v2 store. Never
+    # silently zeros — the confirmed flaw in the published v2 stores. Never
     # hand an incomplete refA to stage 4.
-    if n_err or pct < 100:
+    if n_null:
         raise SystemExit(
-            f"refA incomplete ({n_err} failed groups, {pct:.1f}% non-null); "
-            "rerun this stage until it is 100% before running stage 4"
+            f"refA incomplete: {n_null} null cells; rerun this stage "
+            "(only unfilled groups are recomputed) before running stage 4"
         )
     print("done.")
 
