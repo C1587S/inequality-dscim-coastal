@@ -101,12 +101,18 @@ def main():
         print(f"  exists: {PATH_SLIIDERS_SEG}")
     else:
         t0 = time.time()
-        collapse_econ_inputs_to_seg(
+        # output_path=None returns the dataset so the write goes through
+        # clean_for_zarr; pyCIAM's internal to_zarr trips on numpy 2's
+        # StringDType the same way runner.clean_for_zarr used to
+        seg = collapse_econ_inputs_to_seg(
             str(SLIIDERS_IR["fulladapt"]),
-            str(PATH_SLIIDERS_SEG),
+            None,
             seg_var_subset=None,
             output_chunksize=100,
             seg_var=SEG_VAR,
+        )
+        clean_for_zarr(seg.chunk({"seg": 100})).to_zarr(
+            str(PATH_SLIIDERS_SEG), mode="w", zarr_format=2
         )
         timings["collapse_to_seg"] = time.time() - t0
         print(f"  saved {PATH_SLIIDERS_SEG}")
