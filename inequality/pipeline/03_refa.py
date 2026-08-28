@@ -143,6 +143,14 @@ def main():
         refa_store=str(refa_path),
     )
     cluster.close()
+    # NaN refA holes propagate as NaN noAdaptation costs that the aggregation
+    # silently zeros — the suspected flaw in the published v2 store. Never
+    # hand an incomplete refA to stage 4.
+    if n_err or pct < 100:
+        raise SystemExit(
+            f"refA incomplete ({n_err} failed groups, {pct:.1f}% non-null); "
+            "rerun this stage until it is 100% before running stage 4"
+        )
     print("done.")
 
 

@@ -103,6 +103,11 @@ def main():
         output_store=str(tmp_path),
     )
     cluster.close()
+    if n_err:
+        raise SystemExit(
+            f"{n_err} optimize tasks failed; rerun this stage to gap-fill "
+            "(check=True skips completed segments) before aggregating"
+        )
     print("done.")
 
 

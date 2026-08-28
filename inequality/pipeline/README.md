@@ -93,6 +93,18 @@ reached the refA optimisation. This is identical across scenarios, so it
 cancels in the decomposition, but it is unlikely to be what the curation
 intended, and it belongs on any list of pyCIAM issues to fix upstream.
 
+**The legacy runs could not detect an incomplete noAdaptation case.** Three
+mechanisms stack. refA feeds only the noAdaptation case, so a failed refA
+group (00_full_run logged refA errors and continued) yields NaN noAdaptation
+costs while every other case computes normally. The aggregation's groupby sum
+is skipna, so NaN seg contributions become zeros at impact_region level. And
+the legacy verification assert — `sel(case='optimalfixed').sum(dim='costtype',
+skipna).notnull()` — returns 0.0 for all-NaN cells before the notnull check,
+so it proves nothing even for optimalfixed. The new pipeline closes all
+three: stage 3 refuses to finish with refA below 100% non-null, stages 4/5
+exit nonzero on any failed task, and stage 6 gates on seg_ir-level
+completeness before the skipna aggregation can launder holes into zeros.
+
 **The 1,000 SLR samples are rank-matched, not draw-matched.** The local,
 global, and VLM series are quantiled independently (same seed, same bins), so
 sample n is the rank-n quantile of each series, not one physical FACTS draw.

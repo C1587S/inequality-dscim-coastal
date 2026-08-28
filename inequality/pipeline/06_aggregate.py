@@ -52,6 +52,30 @@ from inputs import load_ciam_in
 AGG_CHUNKSIZE = 2
 
 
+def check_complete(tmp_path):
+    """Refuse to aggregate an incomplete store.
+
+    This gate must run BEFORE aggregation: the groupby sum is skipna, so NaN
+    seg contributions silently become zeros at impact_region level — the
+    suspected flaw in the published v2 noAdaptation case. The legacy runs'
+    post-aggregation assert could not catch it.
+    """
+    t = xr.open_zarr(str(tmp_path)).costs.sel(
+        case=OUTPUT_CASES, ssp=OUTPUT_SSPS, year=OUTPUT_YEARS
+    )
+    n_null = int(t.isnull().sum())
+    if n_null:
+        per_case = t.isnull().sum([d for d in t.dims if d != "case"]).compute()
+        detail = ", ".join(
+            f"{str(c)}: {int(n)}" for c, n in zip(per_case.case.values, per_case.values)
+        )
+        raise SystemExit(
+            f"{n_null} null cells in {tmp_path} for the output cases/years "
+            f"({detail}); rerun stages 4/5 to gap-fill before aggregating"
+        )
+    print("  completeness gate passed: no null cells in output cases/years")
+
+
 def aggregate_to_impact_region(tmp_path, intermediate_path, final_path, ciam_in):
     t = xr.open_zarr(str(tmp_path))
     t = t.sel(case=OUTPUT_CASES, ssp=OUTPUT_SSPS, year=OUTPUT_YEARS)[["costs"]]
@@ -97,9 +121,9 @@ def verify(final_path):
     n_nonnull = int(ds.costs.notnull().sum())
     print(f"  non-null: {n_nonnull}/{ds.costs.size} ({100 * n_nonnull / ds.costs.size:.1f}%)")
     assert "ncc_ar6" in ds.scenario.values, "ncc_ar6 missing"
-    assert (
-        ds.sel(case="optimalfixed", drop=True).sum(dim="costtype").costs.notnull().all()
-    ), "optimalfixed has null values"
+    # every cell, every case — the legacy assert (sum over costtype, skipna,
+    # then notnull) passes over all-NaN cells and proved nothing
+    assert n_nonnull == ds.costs.size, "null cells in final store"
     print("  checks passed")
 
 
@@ -140,6 +164,8 @@ def main():
     timings = {}
 
     if todo["final"]:
+        print("--- completeness gate ---")
+        check_complete(paths["tmp"])
         print("--- aggregate to impact_region ---")
         t0 = time.time()
         aggregate_to_impact_region(
