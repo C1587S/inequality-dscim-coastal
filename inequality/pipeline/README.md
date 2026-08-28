@@ -107,9 +107,13 @@ and nonzero in glocal against 38M the reverse; on storm costs 560M against
 positive; 3,056 regions with all-zero non-storm noAdaptation costs in
 fulladapt against 1 in glocal; USA, NOR, QAT, COD, BGD, MOZ all show zero
 fulladapt storm cost under noAdaptation with sensible glocal values, with the
-region mapping matching fully. The reverse-direction counts (38M/6M) suggest
-glocal carries its own, roughly tenfold-smaller holes — treat both published
-noAdaptation cases as needing the rerun.
+region mapping matching fully. The missing cells sit in clean (region x
+100-sample-block) tiles — the write granularity — in BOTH stores: fulladapt
+349M cells across 6,253 regions (median 6 of 10 blocks), glocal 38M cells
+across 2,858 regions (median 2 blocks). Same defect, roughly a tenth the
+scale in glocal; both published noAdaptation cases need the rerun. Note the
+measured counts are lower bounds: a tile missing in both stores reads as
+zero-equals-zero and is undetectable from the outputs alone.
 
 optimalfixed contains no holes (the case-selection argmin skips NaN) but is
 not strictly clean either: noAdaptation is one of the candidate cases in that
