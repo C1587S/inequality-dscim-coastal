@@ -91,10 +91,18 @@ SLIIDERS_IR = {
 # discarding the rho variable of whichever IR store it is fed, so the seg
 # store is identical for every rho treatment — and refA, which is optimised
 # from it under the no-climate-change scenario (local VLM, identical in both
-# SLR stores), is too. This reproduces the published runs: present-day
-# adaptation (refA) always reflects local income, as in Ian's original
-# run-all-adaptation-scens.ipynb design. The rho variants only reach the main
-# cost calculation, which reads rho from the IR store.
+# SLR stores), is too. Present-day adaptation (refA) always reflects local
+# income, as in Ian's original run-all-adaptation-scens.ipynb design. The rho
+# variants only reach the main cost calculation, which reads rho from the IR
+# store.
+#
+# Checked against the published outputs (Aug 2026, pipeline/checks/): the two
+# stores' noAdaptation cases do NOT agree cell-for-cell, but the divergence
+# is one-sided incompleteness of the published fulladapt store (failed refA
+# groups aggregated as zeros; 349M vs 38M asymmetric zero cells, 3,056 vs 1
+# all-zero regions), not refA responding to rho. Definitive confirmation:
+# after the fulladapt rerun, its noAdaptation non-storm costs should match
+# the published glocal store exactly wherever glocal has no holes.
 PATH_SLIIDERS_SEG = DIR_SCRATCH / "sliiders" / "seg.zarr"
 PATH_REFA = DIR_SCRATCH / "refa" / "refa.zarr"
 SLR = {
@@ -110,14 +118,16 @@ PATH_INTERMEDIATE = {
 # =============================================================================
 # FINAL OUTPUTS
 # =============================================================================
-# fulladapt and glocal point at the surviving production stores; the aggregate
-# stage refuses to overwrite an existing store unless told to.
+# v3 = the complete-refA generation. The published v2 stores have incomplete
+# noAdaptation cases (see README) and are deliberately left in place,
+# documented as defective: overwriting them would silently change data under
+# their consumers. New outputs get new names; consumers migrate knowingly.
 _DIR_OUTPUTS = AnyPath("gs://impactlab-data/gcp/outputs/coastal")
 PATH_FINAL = {
-    "fulladapt": _DIR_OUTPUTS / "pyCIAM_outputs_inequality_1000_ssp234_v2.zarr",
-    "glocal": _DIR_OUTPUTS / "pyCIAM_outputs_inequality_1000_ssp234_v2_globaladapt.zarr",
+    "fulladapt": _DIR_OUTPUTS / "pyCIAM_outputs_inequality_1000_ssp234_v3.zarr",
+    "glocal": _DIR_OUTPUTS / "pyCIAM_outputs_inequality_1000_ssp234_v3_glocal.zarr",
     "global": _DIR_OUTPUTS
-    / "pyCIAM_outputs_inequality_1000_ssp234_v2_global_income_climate.zarr",
+    / "pyCIAM_outputs_inequality_1000_ssp234_v3_global_income_climate.zarr",
 }
 
 # Derived views of the final store: gadmid-labelled, and gadmid subset to the

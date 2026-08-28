@@ -19,6 +19,16 @@ level) was produced across four scripts, in order:
    6-scenario template with the IAM rename; this produced the store
    (25.1 h, `finish_v2_report.json`).
 
+**KNOWN DEFECT (confirmed Aug 2026): the noAdaptation case of this store is
+incomplete** — failed refA groups in `00_full_run.py` left NaN noAdaptation
+costs that the aggregation's skipna sum turned into zeros (3,056 of 7,430
+regions are entirely zero; USA storm costs read as zero). optimalfixed is
+unaffected. The defect propagates to every store derived from v2 (`_gadmid`,
+`_gadmid_coastal`, `_gadmid_shared`, the cluster copy `_c0.23.zarr`). The
+glocal store below carries the same class of defect at roughly a tenth the
+size. Do not use either published noAdaptation case; see
+`../pipeline/README.md` for the full mechanism and measurements.
+
 `..._v2_gadmid.zarr` — `03_map_to_gadmid.py` from the v2 store.
 `..._v2_gadmid_coastal.zarr` — `04_subset_coastal_gadmids.py` from _gadmid,
 dropping ~1,500 inland-water gadmids (7,430 -> 5,903).
