@@ -1,0 +1,9 @@
+{
+  "timings": {
+    "calc_all_cases_gapfill": 68355.33680176735,
+    "optimization": 3871.2948236465454,
+    "aggregation": 531.3782963752747
+  },
+  "total_hours": 20.210558311608104,
+  "output": "gs://impactlab-data/gcp/outputs/coastal/pyCIAM_outputs_inequality_1000_ssp234_v2.zarr"
+}

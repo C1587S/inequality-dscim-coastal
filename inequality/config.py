@@ -63,7 +63,8 @@ PATH_VLM_REQUESTER_PAYS = "gs://ar6-lsl-simulations-requesterpays-standard/gridd
 # MODEL PARAMS
 # =============================================================================
 # Use params.json from repo root
-PATH_PARAMS = Path(__file__).parents[2] / "params.json"
+# PATH_PARAMS = Path(__file__).parents[2] / "params.json"
+PATH_PARAMS = Path(__file__).parents[1] / "params.json"
 
 
 # =============================================================================

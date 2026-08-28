@@ -1,0 +1,33 @@
+{
+  "test": {
+    "scenarios": [
+      "tlim2.0"
+    ],
+    "workflows": [
+      "wf_1f"
+    ],
+    "n_samples": 5,
+    "n_segments": 50,
+    "total_seg_ir": 19714,
+    "n_workers": 3,
+    "timings_seconds": {
+      "slr_local_global": 14.42264699935913,
+      "slr_vlm": 0.2906224727630615,
+      "slr_combine_save": 1434.7081158161163,
+      "collapse_sliiders": 45.45662593841553,
+      "refa": 25.125262022018433,
+      "calc_all_cases": 359.4811706542969,
+      "optimization": 23.27508568763733,
+      "aggregation": 8.9031240940094
+    },
+    "total_seconds": 1911.662653684616,
+    "worker_hours": 1.5930522114038468
+  },
+  "full_run_estimate": {
+    "worker_hours": 31180.648653491866,
+    "cost_multiplier": 19572.898132456383,
+    "wall_hours_40w": 779.5162163372967,
+    "wall_hours_200w": 155.90324326745932,
+    "wall_hours_800w": 38.97581081686483
+  }
+}
