@@ -1,86 +1,30 @@
-# Inequality pyCIAM Inputs
+# Inequality pyCIAM
 
-This folder contains the notebooks and configuration needed to produce pyCIAM coastal damage estimates required for the [inequality analysis](https://gitlab.com/ClimateImpactLab/Impacts/inequality) using temperature-limit (GWL) scenarios.
+Coastal damage estimates for the [inequality
+analysis](https://gitlab.com/ClimateImpactLab/Impacts/inequality), using
+temperature-limit (GWL) SLR scenarios.
 
-## Output Format
+- **`pipeline/`** — the current pipeline: one script per stage, numbered in
+  run order, parameterised by scenario (`fulladapt`, `glocal`, `global`).
+  Start with its README.
+- **`legacy/`** — the scripts that produced the currently published stores,
+  kept for provenance. Its README maps each published zarr to the script that
+  made it. Do not run these.
 
-The final output matches the structure of `pyCIAM_outputs_inequality_1000_ssp234.zarr`:
+## Output format
+
+Final stores (per scenario, gadmid-coastal view) match the structure of the
+original `pyCIAM_outputs_inequality_1000_ssp234.zarr`:
 
 | Dimension | Values |
 |-----------|--------|
-| `case` | 2: `noAdaptation`, `optimalfixed` |
-| `costtype` | 6: `wetland`, `inundation`, `relocation`, `protection`, `stormCapital`, `stormPopulation` |
-| `gadmid` | ~6,000 integer region IDs |
-| `scenario` | 6: `ncc_ar6`, `tlim1.5`, `tlim2.0`, `tlim3.0`, `tlim4.0`, `tlim5.0` |
-| `sample` | 1,000 Monte Carlo samples |
-| `year` | 2: `2050`, `2090` |
-| `ssp` | 3: `SSP2`, `SSP3`, `SSP4` |
-| `iam` | 2: `IIASA GDP`, `OECD Env-Growth` |
+| `case` | `noAdaptation`, `optimalfixed` |
+| `costtype` | `wetland`, `inundation`, `relocation`, `protection`, `stormCapital`, `stormPopulation` |
+| `gadmid` | 5,903 integer region IDs (coastal subset) |
+| `scenario` | `ncc_ar6`, `tlim1.5`, `tlim2.0`, `tlim3.0`, `tlim4.0`, `tlim5.0` |
+| `sample` | 1,000 |
+| `year` | 2050, 2090 |
+| `ssp` | SSP2, SSP3, SSP4 |
+| `iam` | `IIASA GDP`, `OECD Env-Growth` |
 
-**Variable:** `costs` (float32) — total damages in dollars
-
-## Workflow
-
-### Step 1: Process SLR Inputs
-**Notebook:** `01_process_slr_inputs.ipynb`
-
-Processes AR6 FACTS temperature-limit SLR projections into pyCIAM-ready format:
-- Loads local (gridded) SLR from public AR6 bucket
-- Loads global SLR from impactlab bucket
-- Loads VLM (vertical land motion) from requester-pays bucket
-- Downsamples 20,000 MC draws to 1,000 quantiles (500 per workflow × 2 workflows)
-- Outputs zarr with dimensions: `(scenario[5], year[9], sample[1000], site_id[~50000])`
-
-**Must run on compute cluster** (requires requester-pays bucket access)
-
-### Step 2: Run pyCIAM
-**Notebook:** `02_run_pyciam_inequality.ipynb`
-
-Runs pyCIAM to calculate coastal damages:
-1. Collapses SLIIDERS to segment level (if needed)
-2. Calculates reference adaptation heights (refA) under no-climate-change
-3. Runs cost calculations for all adaptation cases (noAdaptation + 4 protect + 4 retreat)
-4. Optimizes to select best adaptation strategy per segment
-5. Aggregates from segment-region to gadmid level
-6. Filters to final output format (cases, years, SSPs)
-
-**Must run on compute cluster** (requires Dask Gateway with 40-800 workers)
-
-## Configuration
-
-All paths and parameters are defined in `config.py`:
-
-### Reused from Regional SCC Workflow
-- **SLIIDERS** (`sliiders-ir.zarr`): Updated socioeconomic data
-- **Surge lookup tables**: Pre-computed storm surge damage functions
-- **Model parameters** (`params.json`): Same as regional SCC
-
-### Inequality-Specific
-- **SLR inputs**: Temperature-limit scenarios (tlim1.5–5.0) instead of SSP-RCP
-- **Reference adaptation**: Regenerated for 1,000 samples
-- **Output format**: gadmid integers, 1,000 samples, 2 years (2050, 2090)
-
-## Data Sources
-
-| Data | Source |
-|------|--------|
-| Local SLR (tlim) | `gs://ar6-lsl-simulations-public-standard/gridded/full_sample_workflows/` |
-| Global SLR (tlim) | `gs://impactlab-data/coastal/data/raw/slr/ar6/ar6/global/full_sample_workflows/` |
-| VLM | `gs://ar6-lsl-simulations-requesterpays-standard/gridded/full_sample_components/` |
-| SLIIDERS | `gs://impactlab-data/coastal/local-scc-model/data/int/sliiders-ir.zarr` |
-| Surge lookup | `gs://impactlab-data/coastal/local-scc-model/data/int/surge-lookup/` |
-
-## Dependencies
-
-```
-numpy
-pandas
-xarray
-dask
-dask-gateway
-distributed
-gcsfs
-cloudpathlib
-python-CIAM  # pip install python-CIAM
-pint-xarray
-```
+**Variable:** `costs` (float32) — total damages in dollars.
