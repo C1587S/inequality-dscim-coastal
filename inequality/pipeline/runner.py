@@ -5,8 +5,8 @@ and run reports.
 
 A stage script calls install_vendored_pyciam() before importing pyCIAM, runs
 its heavy work through a Cluster and run_batched, and ends with write_report.
-Stages write through pyCIAM's check=True machinery, so rerunning a stage after
-a crash skips completed work.
+Stages resume by inspecting their output store or the saved failed-task list,
+so a rerun does only the unfinished work.
 """
 
 import json
@@ -120,16 +120,17 @@ def run_batched(cluster, make_futures, tasks, batch_size, label):
     """Run tasks through make_futures(client, batch) one batch at a time.
 
     A batch interrupted by scheduler death is retried on a fresh cluster.
-    Combined with check=True in the pyCIAM entry points, that makes each stage
-    restartable: completed tasks are skipped on the next pass.
 
-    Returns (n_ok, n_err).
+    Returns (n_ok, n_err, failed), where failed is the list of task
+    descriptors whose futures did not finish. Callers use it to retry
+    exactly those tasks on the next run.
     """
     from distributed import wait
 
     total = len(tasks)
     n_batches = (total + batch_size - 1) // batch_size
     n_ok = n_err = 0
+    failed = []
     t0 = time.time()
     ix = 0
     while ix < n_batches:
@@ -142,15 +143,53 @@ def run_batched(cluster, make_futures, tasks, batch_size, label):
             print(f"{label} batch {ix + 1}/{n_batches} failed: {str(e)[:200]}")
             time.sleep(30)
             continue
-        ok = sum(f.status == "finished" for f in futs)
-        err = len(futs) - ok
+        bad = [i for i, f in enumerate(futs) if f.status != "finished"]
+        failed.extend(batch[i] for i in bad)
+        ok = len(futs) - len(bad)
         n_ok += ok
-        n_err += err
-        _print_progress(label, ix + 1, n_batches, ok, err, n_ok, total, t0)
-        if err:
+        n_err += len(bad)
+        _print_progress(label, ix + 1, n_batches, ok, len(bad), n_ok, total, t0)
+        if bad:
             _print_first_error(futs)
         ix += 1
-    return n_ok, n_err
+    return n_ok, n_err, failed
+
+
+def _jsonable(x):
+    """Numpy arrays and scalars to plain lists and values, recursively."""
+    import numpy as np
+
+    if isinstance(x, np.ndarray):
+        return x.tolist()
+    if isinstance(x, np.generic):
+        return x.item()
+    if isinstance(x, (list, tuple)):
+        return [_jsonable(i) for i in x]
+    return x
+
+
+def _failed_tasks_file(name):
+    return PIPELINE_DIR / f"{name}_failed.json"
+
+
+def save_failed_tasks(name, failed):
+    """Record failed task descriptors so the next run can retry only them."""
+    with open(_failed_tasks_file(name), "w") as f:
+        json.dump([_jsonable(t) for t in failed], f)
+    print(f"failed tasks saved to {_failed_tasks_file(name)}")
+
+
+def load_failed_tasks(name):
+    """The failed tasks from the previous run, or None if it finished clean."""
+    p = _failed_tasks_file(name)
+    if not p.exists():
+        return None
+    with open(p) as f:
+        return [tuple(t) for t in json.load(f)]
+
+
+def clear_failed_tasks(name):
+    _failed_tasks_file(name).unlink(missing_ok=True)
 
 
 def _print_progress(label, batch, n_batches, ok, err, done, total, t0):

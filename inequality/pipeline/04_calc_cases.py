@@ -3,9 +3,10 @@ Stage 4: costs for every adaptation case, per --scenario. The long stage,
 roughly a day at 600 workers.
 
 The output covers six SLR scenarios: the five tlims from the SLR store plus
-ncc_ar6, which pyCIAM builds from the no-climate-change series. Tasks check
-the store before computing, so a rerun after a crash fills only the gaps.
---overwrite starts the store fresh.
+ncc_ar6, which pyCIAM builds from the no-climate-change series.
+
+A rerun reads the store's null mask and runs only the unfinished groups, so
+filling a few holes takes minutes. --overwrite starts the store fresh.
 
 Run on the hub:
   test:  python -u 04_calc_cases.py --scenario glocal --test
@@ -113,17 +114,36 @@ def main():
     ciam_in = load_ciam_in(args.scenario, test=args.test)
     print(f"scenario: {args.scenario}, seg_ir: {len(ciam_in[SEG_VAR])}")
 
-    if args.overwrite or not zarr_exists(tmp_path):
+    resuming = not args.overwrite and zarr_exists(tmp_path)
+    if not resuming:
         write_template(tmp_path, ciam_in, slr_path, samples, params)
-    else:
-        print(f"resuming into existing store {tmp_path} (check=True skips done work)")
 
-    tasks = list(
-        product(
-            chunked(ciam_in[SEG_VAR].values, SEG_CHUNKSIZE),
-            chunked(samples, SAMPLE_CHUNKSIZE),
+    seg_groups = chunked(ciam_in[SEG_VAR].values, SEG_CHUNKSIZE)
+    samp_groups = chunked(samples, SAMPLE_CHUNKSIZE)
+    tasks = list(product(seg_groups, samp_groups))
+
+    if resuming:
+        # tasks write atomically, so one npv point per (seg_ir, sample) says
+        # whether the task that owns it ran; npv has no year or costtype
+        # dimension, which keeps this read small
+        print(f"resuming into {tmp_path}; checking for unfinished groups")
+        isnull = (
+            xr.open_zarr(str(tmp_path))
+            .npv.isel(case=0, scenario=0, ssp=0, iam=0, drop=True)
+            .isnull()
+            .compute()
+            .transpose(SEG_VAR, "sample")
+            .values
         )
-    )
+        seg_off = np.cumsum([0] + [len(g) for g in seg_groups])
+        samp_off = np.cumsum([0] + [len(g) for g in samp_groups])
+        tasks = [
+            (sg, qg)
+            for i, sg in enumerate(seg_groups)
+            for j, qg in enumerate(samp_groups)
+            if isnull[seg_off[i] : seg_off[i + 1], samp_off[j] : samp_off[j + 1]].any()
+        ]
+        print(f"{len(tasks)} of {len(seg_groups) * len(samp_groups)} groups unfinished")
     print(f"tasks: {len(tasks)}")
 
     cluster = Cluster(n_workers)
@@ -147,7 +167,7 @@ def main():
         )
 
     t0 = time.time()
-    n_ok, n_err = run_batched(
+    n_ok, n_err, _ = run_batched(
         cluster, make_futures, tasks, BATCH_SIZE, f"calc[{args.scenario}]"
     )
     timings = {"calc_all_cases": time.time() - t0}
@@ -162,8 +182,9 @@ def main():
     cluster.close()
     if n_err:
         raise SystemExit(
-            f"{n_err} calc tasks failed; rerun this stage to gap-fill "
-            "(check=True skips completed work) before running stage 5"
+            f"{n_err} calc tasks failed; rerun this stage before stage 5. "
+            "The rerun finds the unfinished groups from the store and runs "
+            "only those."
         )
     print("done.")
 

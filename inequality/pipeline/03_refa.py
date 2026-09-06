@@ -133,7 +133,7 @@ def main():
         )
 
     t0 = time.time()
-    n_ok, n_err = run_batched(cluster, make_futures, groups, REFA_BATCH_SIZE, "refA")
+    n_ok, n_err, _ = run_batched(cluster, make_futures, groups, REFA_BATCH_SIZE, "refA")
     timings = {"refA": time.time() - t0}
 
     # gate on the store, not on task attempts: n_err counts failed attempts,
