@@ -10,9 +10,14 @@ owns its chunks. The global store predates this and has 1000-sample chunks
 shared by ten tasks each; concurrent writers there raced and reverted each
 other's slices to NaN, which is where most of its holes came from. Resume
 handles both layouts: it probes npv and costs for null points, reruns only
-the owning tasks, in waves that never write the same chunk concurrently,
-and verifies the store before declaring itself done. --overwrite starts the
-store fresh.
+the owning tasks, in waves that never write the same chunk concurrently.
+
+The script cycles run -> probe until the store is complete, so scheduler
+trouble costs a re-probe rather than a restart, and it only exits nonzero
+if a whole round makes no progress. For a cluster that keeps dropping,
+wrap it so process death restarts too:
+  until python -u 04_calc_cases.py --scenario global; do sleep 120; done
+--overwrite starts the store fresh.
 
 Run on the hub:
   test:  python -u 04_calc_cases.py --scenario glocal --test
@@ -161,21 +166,18 @@ def main():
             if isnull[seg_off[i] : seg_off[i + 1], samp_off[j] : samp_off[j + 1]].any()
         ]
 
-    if resuming:
-        print(f"resuming into {tmp_path}; checking for unfinished groups")
-        tasks = unfinished()
-        print(f"{len(tasks)} of {n_total} groups unfinished")
-
-    # on the misaligned global store, tasks that share a seg group also share
-    # chunks; run them in waves so no two ever write the same chunk at once
-    if resuming and tasks:
+    def build_waves(task_list, probe_driven):
+        """On the misaligned global store, tasks that share a seg group also
+        share chunks; wave them so no two ever write the same chunk at once."""
+        if not probe_driven:
+            return [task_list]
         by_seg = {}
-        for sg, qg in tasks:
+        for sg, qg in task_list:
             by_seg.setdefault(sg[0], []).append((sg, qg))
         n_waves = max(len(v) for v in by_seg.values())
-        waves = [[v[k] for v in by_seg.values() if len(v) > k] for k in range(n_waves)]
-    else:
-        waves = [tasks]
+        return [[v[k] for v in by_seg.values() if len(v) > k] for k in range(n_waves)]
+
+    probe_driven = resuming
 
     def make_futures(client, batch):
         return client.map(
@@ -193,38 +195,51 @@ def main():
             diaz_inputs=False,
             # the probe already decided what to rerun; the store-side check
             # only reads costs, so it would wrongly skip npv-only holes
-            check=not resuming,
+            check=not probe_driven,
         )
 
     t0 = time.time()
     n_ok = n_err = 0
-    for w, wave in enumerate(waves):
-        if len(waves) > 1:
-            print(f"wave {w + 1}/{len(waves)}: {len(wave)} tasks")
-        ok, err, _ = run_batched(
-            cluster, make_futures, wave, BATCH_SIZE, f"calc[{args.scenario}]"
-        )
-        n_ok += ok
-        n_err += err
-    timings = {"calc_all_cases": time.time() - t0}
+    if resuming:
+        print(f"resuming into {tmp_path}; probing for unfinished groups")
+        tasks = unfinished()
+        print(f"{len(tasks)} of {n_total} groups unfinished")
 
-    print("verifying the store")
-    remaining = unfinished(as_tasks=False)
-    print(f"unfinished (seg_ir, sample) cells: {remaining}")
+    # keep cycling run -> probe until the store is complete, so scheduler
+    # trouble mid-run costs a re-probe, not a restart
+    while tasks:
+        waves = build_waves(tasks, probe_driven)
+        for w, wave in enumerate(waves):
+            if len(waves) > 1:
+                print(f"wave {w + 1}/{len(waves)}: {len(wave)} tasks")
+            ok, err, _ = run_batched(
+                cluster, make_futures, wave, BATCH_SIZE, f"calc[{args.scenario}]"
+            )
+            n_ok += ok
+            n_err += err
+        print("probing the store")
+        n_before = len(tasks)
+        tasks = unfinished()
+        print(f"{len(tasks)} groups still unfinished")
+        if tasks and probe_driven and len(tasks) >= n_before:
+            print("no progress this round; stopping")
+            break
+        probe_driven = True
+    timings = {"calc_all_cases": time.time() - t0}
 
     write_report(
         f"04_calc_{args.scenario}" + ("_test" if args.test else ""),
         timings,
         n_ok=n_ok,
         n_err=n_err,
-        n_unfinished_cells=remaining,
+        n_unfinished_groups=len(tasks),
         output_store=str(tmp_path),
     )
     cluster.close()
-    if n_err or remaining:
+    if tasks:
         raise SystemExit(
-            f"{n_err} tasks failed and {remaining} cells are still "
-            "unfinished; rerun this stage before stage 5"
+            f"{len(tasks)} groups still unfinished and the last round made "
+            "no progress; check the log, then rerun this stage"
         )
     print("done.")
 
