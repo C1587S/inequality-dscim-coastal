@@ -69,7 +69,11 @@ class Cluster:
         n = self._n_alive()
         if n == 0:
             raise RuntimeError("no workers came up within 10 minutes")
-        print(f"cluster: {n} workers, dashboard: {self.client.dashboard_link}")
+        print(
+            f"cluster: {n} workers up of {self.n_workers} requested; scaling "
+            f"continues in the background (live count is on every batch line "
+            f"and at {self.client.dashboard_link})"
+        )
 
         if self.ship_pyciam:
             self._push_pyciam()
@@ -148,7 +152,11 @@ def run_batched(cluster, make_futures, tasks, batch_size, label):
         ok = len(futs) - len(bad)
         n_ok += ok
         n_err += len(bad)
-        _print_progress(label, ix + 1, n_batches, ok, len(bad), n_ok, total, t0)
+        try:
+            workers = cluster._n_alive()
+        except Exception:
+            workers = "?"
+        _print_progress(label, ix + 1, n_batches, ok, len(bad), n_ok, total, t0, workers)
         if bad:
             _print_first_error(futs)
         ix += 1
@@ -192,13 +200,13 @@ def clear_failed_tasks(name):
     _failed_tasks_file(name).unlink(missing_ok=True)
 
 
-def _print_progress(label, batch, n_batches, ok, err, done, total, t0):
+def _print_progress(label, batch, n_batches, ok, err, done, total, t0, workers="?"):
     elapsed = time.time() - t0
     rate = done / elapsed if elapsed > 0 else 0
     eta = f"~{(total - done) / rate / 3600:.1f}h left" if rate > 0 else ""
     print(
         f"{label} batch {batch}/{n_batches}: ok={ok} err={err}"
-        f" | {done}/{total} | {elapsed / 60:.0f}min {eta}"
+        f" | {done}/{total} | workers={workers} | {elapsed / 60:.0f}min {eta}"
     )
 
 
