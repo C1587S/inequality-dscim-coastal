@@ -5,8 +5,21 @@ holes rather than take our word for it.
 
 One row per affected (region, sample-block) pair per store, detected as
 noAdaptation cells (any cost type) that are zero in that store and nonzero in
-the other. The counts are FLOORS: a tile that failed in both runs reads
-zero-equals-zero and is invisible to any comparison between the stores.
+the other.
+
+Two mechanisms produced the holes. Failed refA groups left NaN noAdaptation
+costs that the aggregation's skipna sum wrote out as zeros. And the run
+stores chunked samples at 1000 while tasks wrote 100-sample slices, so the
+ten tasks sharing each chunk raced on zarr's read-modify-write and the
+losers' slices silently reverted to NaN. The refA mechanism only touches
+noAdaptation; the races hit every case.
+
+Two limits follow for auditors. The counts are FLOORS: a tile that failed in
+both runs reads zero-equals-zero and is invisible to any comparison between
+the stores. And the mask says nothing about optimalfixed: it probes the
+noAdaptation case only, while the races may have put zeros into the
+published optimalfixed through the same skipna laundering. Nobody has
+measured that.
 
 Writes:
   gs://impactlab-data/gcp/outputs/coastal/
