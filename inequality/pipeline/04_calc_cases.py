@@ -5,8 +5,14 @@ roughly a day at 600 workers.
 The output covers six SLR scenarios: the five tlims from the SLR store plus
 ncc_ar6, which pyCIAM builds from the no-climate-change series.
 
-A rerun reads the store's null mask and runs only the unfinished groups, so
-filling a few holes takes minutes. --overwrite starts the store fresh.
+Templates chunk the sample dimension at the task write size, so each task
+owns its chunks. The global store predates this and has 1000-sample chunks
+shared by ten tasks each; concurrent writers there raced and reverted each
+other's slices to NaN, which is where most of its holes came from. Resume
+handles both layouts: it probes npv and costs for null points, reruns only
+the owning tasks, in waves that never write the same chunk concurrently,
+and verifies the store before declaring itself done. --overwrite starts the
+store fresh.
 
 Run on the hub:
   test:  python -u 04_calc_cases.py --scenario glocal --test
@@ -80,7 +86,10 @@ def write_template(path, ciam_in, slr_path, samples, params):
             **{d: ciam_in[d].values for d in ["ssp", "iam"] if d in ciam_in.dims},
         }
     )
-    chunk_spec = {SEG_VAR: 1, "case": len(CASES) - 1}
+    # sample chunks must match the task write size: tasks write 100-sample
+    # slices, and a chunk shared by several tasks gets read-modify-written
+    # concurrently, silently reverting the losers' slices to NaN
+    chunk_spec = {SEG_VAR: 1, "case": len(CASES) - 1, "sample": SAMPLE_CHUNKSIZE}
     chunks = {k: chunk_spec.get(k, len(v)) for k, v in coords.items()}
     out = create_template_dataarray(coords.keys(), coords, chunks).to_dataset(
         name="costs"
@@ -121,33 +130,52 @@ def main():
     seg_groups = chunked(ciam_in[SEG_VAR].values, SEG_CHUNKSIZE)
     samp_groups = chunked(samples, SAMPLE_CHUNKSIZE)
     tasks = list(product(seg_groups, samp_groups))
+    n_total = len(tasks)
 
-    if resuming:
-        # tasks write atomically, so one npv point per (seg_ir, sample) says
-        # whether the task that owns it ran; npv has no year or costtype
-        # dimension, which keeps this read small
-        print(f"resuming into {tmp_path}; checking for unfinished groups")
+    cluster = Cluster(n_workers)
+    cluster.start()
+
+    def unfinished(as_tasks=True):
+        """One null probe point of npv or costs per (seg_ir, sample) flags
+        the owning task; tasks write both variables, and a task can lose a
+        chunk race in one variable but not the other, so probe both."""
+        ds = xr.open_zarr(str(tmp_path))
+        npv = ds.npv.isel(case=0, scenario=0, ssp=0, iam=0, drop=True)
+        costs = ds.costs.isel(
+            case=0, costtype=0, scenario=0, year=-1, ssp=0, iam=0, drop=True
+        )
         isnull = (
-            xr.open_zarr(str(tmp_path))
-            .npv.isel(case=0, scenario=0, ssp=0, iam=0, drop=True)
-            .isnull()
-            .compute()
+            (npv.isnull() | costs.isnull())
             .transpose(SEG_VAR, "sample")
+            .compute()
             .values
         )
+        if not as_tasks:
+            return int(isnull.sum())
         seg_off = np.cumsum([0] + [len(g) for g in seg_groups])
         samp_off = np.cumsum([0] + [len(g) for g in samp_groups])
-        tasks = [
+        return [
             (sg, qg)
             for i, sg in enumerate(seg_groups)
             for j, qg in enumerate(samp_groups)
             if isnull[seg_off[i] : seg_off[i + 1], samp_off[j] : samp_off[j + 1]].any()
         ]
-        print(f"{len(tasks)} of {len(seg_groups) * len(samp_groups)} groups unfinished")
-    print(f"tasks: {len(tasks)}")
 
-    cluster = Cluster(n_workers)
-    cluster.start()
+    if resuming:
+        print(f"resuming into {tmp_path}; checking for unfinished groups")
+        tasks = unfinished()
+        print(f"{len(tasks)} of {n_total} groups unfinished")
+
+    # on the misaligned global store, tasks that share a seg group also share
+    # chunks; run them in waves so no two ever write the same chunk at once
+    if resuming and tasks:
+        by_seg = {}
+        for sg, qg in tasks:
+            by_seg.setdefault(sg[0], []).append((sg, qg))
+        n_waves = max(len(v) for v in by_seg.values())
+        waves = [[v[k] for v in by_seg.values() if len(v) > k] for k in range(n_waves)]
+    else:
+        waves = [tasks]
 
     def make_futures(client, batch):
         return client.map(
@@ -163,28 +191,40 @@ def main():
             seg_var=SEG_VAR,
             mc_dim=MC_DIM,
             diaz_inputs=False,
-            check=True,
+            # the probe already decided what to rerun; the store-side check
+            # only reads costs, so it would wrongly skip npv-only holes
+            check=not resuming,
         )
 
     t0 = time.time()
-    n_ok, n_err, _ = run_batched(
-        cluster, make_futures, tasks, BATCH_SIZE, f"calc[{args.scenario}]"
-    )
+    n_ok = n_err = 0
+    for w, wave in enumerate(waves):
+        if len(waves) > 1:
+            print(f"wave {w + 1}/{len(waves)}: {len(wave)} tasks")
+        ok, err, _ = run_batched(
+            cluster, make_futures, wave, BATCH_SIZE, f"calc[{args.scenario}]"
+        )
+        n_ok += ok
+        n_err += err
     timings = {"calc_all_cases": time.time() - t0}
+
+    print("verifying the store")
+    remaining = unfinished(as_tasks=False)
+    print(f"unfinished (seg_ir, sample) cells: {remaining}")
 
     write_report(
         f"04_calc_{args.scenario}" + ("_test" if args.test else ""),
         timings,
         n_ok=n_ok,
         n_err=n_err,
+        n_unfinished_cells=remaining,
         output_store=str(tmp_path),
     )
     cluster.close()
-    if n_err:
+    if n_err or remaining:
         raise SystemExit(
-            f"{n_err} calc tasks failed; rerun this stage before stage 5. "
-            "The rerun finds the unfinished groups from the store and runs "
-            "only those."
+            f"{n_err} tasks failed and {remaining} cells are still "
+            "unfinished; rerun this stage before stage 5"
         )
     print("done.")
 
