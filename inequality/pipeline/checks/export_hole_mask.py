@@ -17,9 +17,18 @@ noAdaptation; the races hit every case.
 Two limits follow for auditors. The counts are FLOORS: a tile that failed in
 both runs reads zero-equals-zero and is invisible to any comparison between
 the stores. And the mask says nothing about optimalfixed: it probes the
-noAdaptation case only, while the races may have put zeros into the
-published optimalfixed through the same skipna laundering. Nobody has
-measured that.
+noAdaptation case only.
+
+The optimalfixed damage has since been measured, and it dwarfs what this
+mask shows. Against the race-free v3 global store at optimalfixed, tlim3.0,
+SSP2, IIASA, 2090, on the shared coastal gadmids: 82% of (gadmid, sample)
+cost totals are exactly zero in BOTH published v2 stores, against 15% in v3
+- the legitimate no-cost share. Roughly 67 points of every published
+optimalfixed slice is holes read as zeros. Sums and means are understated
+several-fold (a raw 11x cross-store ratio fell to 2.5x on cells nonzero in
+both stores), and per-gadmid sample medians mostly collapse to zero
+outright. Do not compute anything from the published optimalfixed; use the
+v3 stores.
 
 Writes:
   gs://impactlab-data/gcp/outputs/coastal/
