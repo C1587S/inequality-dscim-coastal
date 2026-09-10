@@ -208,3 +208,4 @@ __marimo__/
 
 # vendored pyCIAM checkout (own .git, installed by the run scripts)
 pyciam/
+.DS_Store
