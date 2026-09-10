@@ -19,9 +19,11 @@ and the ratio recomputed on cells nonzero in both stores.
 Run on the hub: python -u checks/verify_global_jump.py
 """
 
-import numpy as np
+import time
+
 import pandas as pd
 import xarray as xr
+from dask.diagnostics import ProgressBar
 
 DIR = "gs://impactlab-data/gcp/outputs/coastal"
 STORES = {
@@ -34,14 +36,28 @@ SEL = dict(case="optimalfixed", scenario="tlim3.0", year=2090, ssp="SSP2")
 UPLIFT = ["NOR", "SWE", "FIN", "DNK", "ISL", "CAN", "USA", "RUS", "EST", "LVA", "LTU", "GBR"]
 
 
-def load_slice(path):
-    da = xr.open_zarr(path).costs.sel(**SEL, drop=True)
+def load_slice(path, name):
+    ds = xr.open_zarr(path)
+    da = ds.costs.sel(**SEL, drop=True)
     iams = [v for v in da.iam.values.astype(str) if "IIASA" in v]
-    return da.sel(iam=iams[0] if iams else da.iam.values[0], drop=True).load()
+    da = da.sel(iam=iams[0] if iams else da.iam.values[0], drop=True)
+    # store chunks span everything except region, so this reads the whole
+    # optimalfixed half of the store, not just the 178 MB logical slice
+    gb = ds.costs.nbytes / 2 / 1e9
+    print(
+        f"{name}: reading ~{gb:.0f} GB uncompressed through hub threads, "
+        f"typically a few minutes:",
+        flush=True,
+    )
+    t0 = time.time()
+    with ProgressBar():
+        da = da.load()
+    print(f"{name}: loaded in {(time.time() - t0) / 60:.1f} min", flush=True)
+    return da
 
 
 def main():
-    slices = {name: load_slice(path) for name, path in STORES.items()}
+    slices = {name: load_slice(path, name) for name, path in STORES.items()}
     regions = None
     for da in slices.values():
         r = set(str(x) for x in da.impact_region.values)
