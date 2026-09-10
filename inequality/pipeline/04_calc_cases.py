@@ -149,12 +149,20 @@ def main():
         costs = ds.costs.isel(
             case=0, costtype=0, scenario=0, year=-1, ssp=0, iam=0, drop=True
         )
+        gb = (ds.npv.nbytes + ds.costs.nbytes) * 10 / 11 / 1e9
+        print(
+            f"probe: ~{gb:.0f} GB of solve chunks on the cluster "
+            "(live view on the dashboard)",
+            flush=True,
+        )
+        tp = time.time()
         isnull = (
             (npv.isnull() | costs.isnull())
             .transpose(SEG_VAR, "sample")
             .compute()
             .values
         )
+        print(f"probe: done in {(time.time() - tp) / 60:.1f} min", flush=True)
         if not as_tasks:
             return int(isnull.sum())
         seg_off = np.cumsum([0] + [len(g) for g in seg_groups])

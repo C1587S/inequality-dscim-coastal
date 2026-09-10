@@ -56,10 +56,15 @@ def check_complete(tmp_path):
     impact_region level. That is how the published v2 stores went wrong, and
     no post-aggregation check can see it, so this runs first.
     """
-    t = xr.open_zarr(str(tmp_path)).costs.sel(
-        case=OUTPUT_CASES, ssp=OUTPUT_SSPS, year=OUTPUT_YEARS
+    ds = xr.open_zarr(str(tmp_path))
+    t = ds.costs.sel(case=OUTPUT_CASES, ssp=OUTPUT_SSPS, year=OUTPUT_YEARS)
+    print(
+        f"  scanning ~{ds.costs.nbytes / 1e9:.0f} GB of costs chunks on the cluster",
+        flush=True,
     )
+    t0 = time.time()
     n_null = int(t.isnull().sum())
+    print(f"  scanned in {(time.time() - t0) / 60:.1f} min", flush=True)
     if n_null:
         per_case = t.isnull().sum([d for d in t.dims if d != "case"]).compute()
         detail = ", ".join(
@@ -85,6 +90,20 @@ def aggregate_to_impact_region(tmp_path, intermediate_path, final_path, ciam_in)
     )
     out = out.drop_vars(SEG_VAR).unify_chunks()
     out["iam"] = [IAM_RENAME.get(str(i), str(i)) for i in out.iam.values]
+    # one chunk per (case, scenario, year, ssp, iam): an analysis slice is a
+    # single ~180 MB read instead of the whole store
+    out = out.chunk(
+        {
+            "case": 1,
+            "scenario": 1,
+            "year": 1,
+            "ssp": 1,
+            "iam": 1,
+            AGG_VAR: -1,
+            "sample": -1,
+            "costtype": -1,
+        }
+    )
     out = clean_for_zarr(out).persist()
     out.to_zarr(str(final_path), mode="w", zarr_format=2)
     print(f"  saved {final_path}")

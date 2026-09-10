@@ -82,13 +82,17 @@ def main():
     cluster = Cluster(n_workers)
     cluster.start()
 
-    print("checking the calc store is complete")
-    n_null = int(
-        xr.open_zarr(str(tmp_path))
-        .npv.isel(case=0, scenario=0, ssp=0, iam=0, drop=True)
-        .isnull()
-        .sum()
+    ds = xr.open_zarr(str(tmp_path))
+    print(
+        f"checking the calc store is complete "
+        f"(~{ds.npv.nbytes * 10 / 11 / 1e9:.0f} GB of npv chunks on the cluster)",
+        flush=True,
     )
+    tg = time.time()
+    n_null = int(
+        ds.npv.isel(case=0, scenario=0, ssp=0, iam=0, drop=True).isnull().sum()
+    )
+    print(f"checked in {(time.time() - tg) / 60:.1f} min", flush=True)
     if n_null:
         raise SystemExit(
             f"{n_null} (seg_ir, sample) cells in {tmp_path} have no calc "
@@ -107,12 +111,20 @@ def main():
         costs = ds.costs.sel(case="optimalfixed", drop=True).isel(
             costtype=0, scenario=0, year=-1, ssp=0, iam=0, drop=True
         )
+        gb = (ds.npv.nbytes + ds.costs.nbytes) / 11 / 1e9
+        print(
+            f"probe: ~{gb:.0f} GB of optimalfixed chunks on the cluster "
+            "(live view on the dashboard)",
+            flush=True,
+        )
+        tp = time.time()
         isnull = (
             (npv.isnull() | costs.isnull())
             .transpose(SEG_VAR, "sample")
             .compute()
             .values
         )
+        print(f"probe: done in {(time.time() - tp) / 60:.1f} min", flush=True)
         if not as_tasks:
             return int(isnull.sum())
         return [
