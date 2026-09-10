@@ -19,6 +19,11 @@ wrap it so process death restarts too:
   until python -u 04_calc_cases.py --scenario global; do sleep 120; done
 --overwrite starts the store fresh.
 
+On RCC this runs as a SLURM array instead, with no cluster at all:
+--template-only once, an array of --shard K/N elements each owning its
+segments' chunks outright, then --probe-only to verify and to stage a
+gap-fill list for resubmission. See rcc/README.md.
+
 Run on the hub:
   test:  python -u 04_calc_cases.py --scenario glocal --test
   full:  nohup python -u 04_calc_cases.py --scenario glocal > 04_calc_glocal.log 2>&1 &
@@ -36,7 +41,10 @@ import xarray as xr
 from runner import (
     Cluster,
     install_vendored_pyciam,
+    load_unfinished,
     run_batched,
+    save_unfinished,
+    unfinished_tasks_file,
     write_report,
     zarr_exists,
 )
@@ -75,6 +83,39 @@ def run_calc_all_cases(grp, **kwargs):
     return calc_all_cases(grp, **kwargs)
 
 
+def run_shard(k, n, seg_groups, samp_groups, unfinished_file, task_kwargs):
+    """One SLURM array element: seg groups k::n with all their sample groups,
+    run serially. An element owns its seg groups' chunks outright, so there
+    is nothing to race and no scheduler to lose. A prior --probe-only run
+    leaves an unfinished list behind; when present, only those tasks run.
+    Otherwise a full sweep with pyCIAM's store check, which makes
+    resubmitting an element a cheap gap-fill."""
+    todo = load_unfinished(unfinished_file)
+    if todo is not None:
+        pairs = [
+            (seg_groups[i], samp_groups[j]) for i, j in todo if i % n == k
+        ]
+        check = False
+        print(f"shard {k}/{n}: {len(pairs)} unfinished tasks from the probe")
+    else:
+        pairs = [(sg, qg) for sg in seg_groups[k::n] for qg in samp_groups]
+        check = True
+        print(f"shard {k}/{n}: {len(pairs)} tasks, full sweep with store check")
+    n_err = 0
+    t0 = time.time()
+    for i, (sg, qg) in enumerate(pairs):
+        try:
+            run_calc_all_cases((sg, qg), check=check, **task_kwargs)
+        except Exception as e:
+            n_err += 1
+            print(f"task ({sg[0]}, samples {qg[0]}..{qg[-1]}) failed: {str(e)[:200]}")
+        if (i + 1) % 20 == 0 or i + 1 == len(pairs):
+            print(f"{i + 1}/{len(pairs)} | {(time.time() - t0) / 60:.1f} min", flush=True)
+    if n_err:
+        raise SystemExit(f"shard {k}/{n}: {n_err} tasks failed; resubmit this element")
+    print(f"shard {k}/{n} done in {(time.time() - t0) / 60:.1f} min")
+
+
 def write_template(path, ciam_in, slr_path, samples, params):
     slr = xr.open_zarr(str(slr_path), chunks=None)
     scenarios = ["ncc_ar6"] + list(slr.scenario.values)
@@ -91,10 +132,16 @@ def write_template(path, ciam_in, slr_path, samples, params):
             **{d: ciam_in[d].values for d in ["ssp", "iam"] if d in ciam_in.dims},
         }
     )
-    # sample chunks must match the task write size: tasks write 100-sample
-    # slices, and a chunk shared by several tasks gets read-modify-written
-    # concurrently, silently reverting the losers' slices to NaN
-    chunk_spec = {SEG_VAR: 1, "case": len(CASES) - 1, "sample": SAMPLE_CHUNKSIZE}
+    # chunks must match the task write shape: tasks write SEG_CHUNKSIZE
+    # segments x SAMPLE_CHUNKSIZE samples, and a chunk shared by several
+    # tasks gets read-modify-written concurrently, silently reverting the
+    # losers' slices to NaN. Seg chunks at the task size also halve the
+    # store's file count, which matters on inode-limited filesystems.
+    chunk_spec = {
+        SEG_VAR: SEG_CHUNKSIZE,
+        "case": len(CASES) - 1,
+        "sample": SAMPLE_CHUNKSIZE,
+    }
     chunks = {k: chunk_spec.get(k, len(v)) for k, v in coords.items()}
     out = create_template_dataarray(coords.keys(), coords, chunks).to_dataset(
         name="costs"
@@ -112,6 +159,19 @@ def main():
     parser.add_argument("--test", action="store_true")
     parser.add_argument(
         "--overwrite", action="store_true", help="discard the output store, start fresh"
+    )
+    parser.add_argument(
+        "--template-only", action="store_true",
+        help="write the template and exit (run once before a SLURM array)",
+    )
+    parser.add_argument(
+        "--shard", metavar="K/N",
+        help="SLURM array mode: run seg groups K::N serially, no cluster",
+    )
+    parser.add_argument(
+        "--probe-only", action="store_true",
+        help="count unfinished groups, save them for shard resume, and exit "
+        "nonzero if any",
     )
     args = parser.parse_args()
 
@@ -131,16 +191,30 @@ def main():
     resuming = not args.overwrite and zarr_exists(tmp_path)
     if not resuming:
         write_template(tmp_path, ciam_in, slr_path, samples, params)
+    if args.template_only:
+        print("template ready.")
+        return
 
     seg_groups = chunked(ciam_in[SEG_VAR].values, SEG_CHUNKSIZE)
     samp_groups = chunked(samples, SAMPLE_CHUNKSIZE)
     tasks = list(product(seg_groups, samp_groups))
     n_total = len(tasks)
 
-    cluster = Cluster(n_workers)
-    cluster.start()
+    task_kwargs = dict(
+        params=params,
+        econ_input_path=str(SLIIDERS_IR[args.scenario]),
+        slr_input_paths=[str(slr_path)],
+        slr_names=["ar6"],
+        output_path=str(tmp_path),
+        refA_path=str(refa_path),
+        surge_input_path=str(PATHS_SURGE_LOOKUP[SEG_VAR]),
+        seg_var=SEG_VAR,
+        mc_dim=MC_DIM,
+        diaz_inputs=False,
+    )
+    unfinished_file = unfinished_tasks_file(f"04_{args.scenario}")
 
-    def unfinished(as_tasks=True):
+    def unfinished(as_tasks=True, as_indices=False):
         """One null probe point of npv or costs per (seg_ir, sample) flags
         the owning task; tasks write both variables, and a task can lose a
         chunk race in one variable but not the other, so probe both."""
@@ -159,12 +233,30 @@ def main():
             return int(isnull.sum())
         seg_off = np.cumsum([0] + [len(g) for g in seg_groups])
         samp_off = np.cumsum([0] + [len(g) for g in samp_groups])
-        return [
-            (sg, qg)
-            for i, sg in enumerate(seg_groups)
-            for j, qg in enumerate(samp_groups)
+        hit = [
+            (i, j)
+            for i in range(len(seg_groups))
+            for j in range(len(samp_groups))
             if isnull[seg_off[i] : seg_off[i + 1], samp_off[j] : samp_off[j + 1]].any()
         ]
+        if as_indices:
+            return hit
+        return [(seg_groups[i], samp_groups[j]) for i, j in hit]
+
+    if args.probe_only:
+        print("probing npv and costs for unfinished groups")
+        hit = unfinished(as_indices=True)
+        print(f"{len(hit)} of {n_total} groups unfinished")
+        save_unfinished(unfinished_file, hit)
+        raise SystemExit(1 if hit else 0)
+
+    if args.shard:
+        k, n = (int(x) for x in args.shard.split("/"))
+        run_shard(k, n, seg_groups, samp_groups, unfinished_file, task_kwargs)
+        return
+
+    cluster = Cluster(n_workers)
+    cluster.start()
 
     def build_waves(task_list, probe_driven):
         """On the misaligned global store, tasks that share a seg group also
@@ -180,22 +272,10 @@ def main():
     probe_driven = resuming
 
     def make_futures(client, batch):
+        # the probe already decided what to rerun; the store-side check
+        # only reads costs, so it would wrongly skip npv-only holes
         return client.map(
-            run_calc_all_cases,
-            batch,
-            params=params,
-            econ_input_path=str(SLIIDERS_IR[args.scenario]),
-            slr_input_paths=[str(slr_path)],
-            slr_names=["ar6"],
-            output_path=str(tmp_path),
-            refA_path=str(refa_path),
-            surge_input_path=str(PATHS_SURGE_LOOKUP[SEG_VAR]),
-            seg_var=SEG_VAR,
-            mc_dim=MC_DIM,
-            diaz_inputs=False,
-            # the probe already decided what to rerun; the store-side check
-            # only reads costs, so it would wrongly skip npv-only holes
-            check=not probe_driven,
+            run_calc_all_cases, batch, check=not probe_driven, **task_kwargs
         )
 
     t0 = time.time()

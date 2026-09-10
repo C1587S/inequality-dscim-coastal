@@ -1,4 +1,8 @@
 """
+RESOLVED (Sep 2026): the jump was an artifact of v2 incompleteness, not a
+scenario effect. diagnose_uniform_gap_rcc.py has the closing evidence; see
+the README note.
+
 Verify the 50x jump of global (v3) over glocal (v2) at optimalfixed,
 tlim3.0, SSP2, IIASA, 2090.
 

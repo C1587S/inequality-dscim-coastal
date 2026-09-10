@@ -1,4 +1,9 @@
 """
+RESOLVED (Sep 2026): the excess is uncorrelated with dslr (Spearman 0.02)
+and present where sea level falls, so the mechanism tested here is dead.
+diagnose_uniform_gap_rcc.py traced the gap to v2 incompleteness; see the
+README note.
+
 Test what drives the global-vs-glocal cost excess, on RCC, with statistics
 that survive the v2 holes.
 

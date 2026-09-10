@@ -1,0 +1,26 @@
+# Conda env for running pipeline stages on RCC. Build once:
+#   mamba env create -f environment.yml -p /project/cil/home_dirs/rcc/envs/pyciam
+# then install the vendored pyCIAM from a clone of this repo:
+#   pip install --no-deps -e /path/to/inequality-dscim-coastal/pyciam
+# rhg-compute-tools is installed without deps on purpose; the pieces pyCIAM
+# imports from it need only dask and xarray, which are here.
+name: pyciam
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - numpy
+  - pandas
+  - xarray
+  - zarr
+  - dask
+  - distributed
+  - scipy
+  - scikit-learn
+  - pint
+  - pint-xarray
+  - cloudpathlib
+  - pip
+  - pip:
+      - --no-deps
+      - rhg-compute-tools

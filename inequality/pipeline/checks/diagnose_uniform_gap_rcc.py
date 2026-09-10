@@ -1,4 +1,28 @@
 """
+CONCLUDED (Sep 2026). Full record of the investigation this script closed:
+
+An apparent 50x cost jump of the global scenario (v3) over the published
+glocal store (v2) at optimalfixed, tlim3.0, SSP2, IIASA, 2090 was an
+artifact of comparing a complete store against incomplete ones. The v2
+stores lost most of their optimalfixed cells to write races and refA holes:
+82% of (gadmid, sample) cost totals are exactly zero in both v2 stores
+against 15% legitimate zeros in the race-free v3, and the raw ratio fell
+from 11x to 2.5x on cells nonzero in both. Sea level was then ruled out
+(test_fingerprint_rcc.py: Spearman 0.02 against the imposed SLR change,
+ratio 1.9x where sea level falls), income was never in play (both stores
+use global rho), and this script ruled on what remained: the ratio is
+1.82x on ncc_ar6, which contains no climate signal at all, against
+1.90-2.02x on the warming scenarios, with no warming gradient and matching
+costtype shares (protection 33% against 31%, so case selection is clean).
+A ratio that survives the removal of all climate content measures store
+completeness, not scenario physics. fulladapt v2 is far worse off than
+glocal v2: 10-16x below v3 on common support with per-gadmid quartiles
+reaching 17,000, far beyond any income effect, matching its larger hole
+counts.
+
+Therefore no v2-vs-v3 comparison informs scenario effects, and scenario
+numbers exist once fulladapt and glocal have v3 reruns, compared within v3.
+
 Find where the uniform ~2x gap between global_v3 and the v2 stores comes
 from, given that sea level doesn't explain it (Spearman 0.02 against dslr,
 ratio 1.9x where sea level falls).

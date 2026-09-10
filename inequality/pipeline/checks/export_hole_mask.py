@@ -25,10 +25,12 @@ SSP2, IIASA, 2090, on the shared coastal gadmids: 82% of (gadmid, sample)
 cost totals are exactly zero in BOTH published v2 stores, against 15% in v3
 - the legitimate no-cost share. Roughly 67 points of every published
 optimalfixed slice is holes read as zeros. Sums and means are understated
-several-fold (a raw 11x cross-store ratio fell to 2.5x on cells nonzero in
-both stores), and per-gadmid sample medians mostly collapse to zero
-outright. Do not compute anything from the published optimalfixed; use the
-v3 stores.
+several-fold, and per-gadmid sample medians mostly collapse to zero
+outright. Even on cells both stores wrote, glocal v2 sits ~2x below v3
+uniformly across scenarios including no-climate-change, and fulladapt v2
+sits 10-16x below with per-gadmid quartiles reaching 17,000 - far beyond
+any income effect, matching its larger hole counts. Do not compute anything
+from the published optimalfixed; use the v3 stores.
 
 Writes:
   gs://impactlab-data/gcp/outputs/coastal/

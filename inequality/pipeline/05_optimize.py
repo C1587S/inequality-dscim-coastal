@@ -21,6 +21,10 @@ optimal_case variable can't be probed, being uint8 whose unwritten cells
 read as 0, a valid case index. For a cluster that keeps dropping, wrap it:
   until python -u 05_optimize.py --scenario global; do sleep 120; done
 
+On RCC this runs as a SLURM array instead: --shard K/N elements each own
+whole segments, and refuse any segment whose stage-4 npv has nulls;
+--probe-only verifies and stages a gap-fill list. See rcc/README.md.
+
 Run on the hub:
   test:  python -u 05_optimize.py --scenario glocal --test
   full:  nohup python -u 05_optimize.py --scenario glocal > 05_glocal.log 2>&1 &
@@ -32,7 +36,15 @@ import time
 import numpy as np
 import xarray as xr
 
-from runner import Cluster, install_vendored_pyciam, run_batched, write_report
+from runner import (
+    Cluster,
+    install_vendored_pyciam,
+    load_unfinished,
+    run_batched,
+    save_unfinished,
+    unfinished_tasks_file,
+    write_report,
+)
 
 install_vendored_pyciam()
 
@@ -58,10 +70,64 @@ def run_optimize_case(seg_ir, **kwargs):
     return optimize_case(seg_ir, **kwargs)
 
 
+def run_shard(k, n, segs, samp_groups, tmp_path, unfinished_file, task_kwargs):
+    """One SLURM array element: segments k::n with all their sample groups,
+    run serially, so elements never share a chunk. Before optimizing a
+    segment, its own stage-4 npv is checked for nulls: the case selection
+    sums sibling npv with skipna (pyCIAM/run.py:842), so optimizing over
+    holes would silently skew the whole segment. A prior --probe-only run
+    leaves an unfinished list; when present, only those tasks run."""
+    ds = xr.open_zarr(str(tmp_path))
+    todo = load_unfinished(unfinished_file)
+    if todo is not None:
+        mine = [(i, j) for i, j in todo if i % n == k]
+        print(f"shard {k}/{n}: {len(mine)} unfinished tasks from the probe")
+    else:
+        mine = [(i, j) for i in range(k, len(segs), n) for j in range(len(samp_groups))]
+        print(f"shard {k}/{n}: {len(mine)} tasks, full sweep with store check")
+    n_err = 0
+    t0 = time.time()
+    for count, (i, j) in enumerate(mine):
+        seg = segs[i]
+        if count == 0 or mine[count - 1][0] != i:
+            n_null = int(
+                ds.npv.sel({SEG_VAR: seg})
+                .drop_sel(case="optimalfixed")
+                .isnull()
+                .sum()
+            )
+            if n_null:
+                n_err += 1
+                print(f"{seg}: {n_null} null calc cells, refusing to optimize")
+                continue
+        try:
+            run_optimize_case(
+                seg, quantiles=samp_groups[j], check=todo is None, **task_kwargs
+            )
+        except Exception as e:
+            n_err += 1
+            print(f"task ({seg}, group {j}) failed: {str(e)[:200]}")
+        if (count + 1) % 40 == 0 or count + 1 == len(mine):
+            print(f"{count + 1}/{len(mine)} | {(time.time() - t0) / 60:.1f} min", flush=True)
+    if n_err:
+        raise SystemExit(f"shard {k}/{n}: {n_err} failures; fix stage 4 holes "
+                         "if reported, then resubmit this element")
+    print(f"shard {k}/{n} done in {(time.time() - t0) / 60:.1f} min")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--scenario", required=True, choices=SCENARIOS)
     parser.add_argument("--test", action="store_true")
+    parser.add_argument(
+        "--shard", metavar="K/N",
+        help="SLURM array mode: run segments K::N serially, no cluster",
+    )
+    parser.add_argument(
+        "--probe-only", action="store_true",
+        help="count unfinished groups, save them for shard resume, and exit "
+        "nonzero if any",
+    )
     args = parser.parse_args()
 
     n_samples, n_workers = N_SAMPLES_TOTAL, N_WORKERS
@@ -78,6 +144,48 @@ def main():
     samp_off = np.cumsum([0] + [len(g) for g in samp_groups])
     n_total = len(segs) * len(samp_groups)
     stage = f"05_optimize_{args.scenario}" + ("_test" if args.test else "")
+    unfinished_file = unfinished_tasks_file(stage)
+    task_kwargs = dict(
+        econ_input_path=str(SLIIDERS_IR[args.scenario]),
+        output_path=str(tmp_path),
+        seg_var=SEG_VAR,
+        eps=1,
+    )
+
+    def probe_indices():
+        """(seg index, group index) pairs whose optimalfixed npv or costs
+        probe point is null; both probed since either can be missing."""
+        ds = xr.open_zarr(str(tmp_path))
+        npv = ds.npv.sel(case="optimalfixed", drop=True).isel(
+            scenario=0, ssp=0, iam=0, drop=True
+        )
+        costs = ds.costs.sel(case="optimalfixed", drop=True).isel(
+            costtype=0, scenario=0, year=-1, ssp=0, iam=0, drop=True
+        )
+        isnull = (
+            (npv.isnull() | costs.isnull())
+            .transpose(SEG_VAR, "sample")
+            .compute()
+            .values
+        )
+        return [
+            (i, j)
+            for i in range(len(segs))
+            for j in range(len(samp_groups))
+            if isnull[i, samp_off[j] : samp_off[j + 1]].any()
+        ]
+
+    if args.probe_only:
+        print("probing optimalfixed for unfinished groups")
+        hit = probe_indices()
+        print(f"{len(hit)} of {n_total} groups unfinished")
+        save_unfinished(unfinished_file, hit)
+        raise SystemExit(1 if hit else 0)
+
+    if args.shard:
+        k, n = (int(x) for x in args.shard.split("/"))
+        run_shard(k, n, segs, samp_groups, tmp_path, unfinished_file, task_kwargs)
+        return
 
     cluster = Cluster(n_workers)
     cluster.start()

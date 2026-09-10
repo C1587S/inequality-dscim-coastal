@@ -19,11 +19,26 @@ global, and VLM series (see 01_process_slr.py), so sample n is rank-matched
 across series, not a single physical FACTS draw.
 """
 
+import os
 from pathlib import Path
 
 from cloudpathlib import AnyPath
 
 SCENARIOS = ("fulladapt", "glocal", "global")
+
+# The three data roots resolve from environment variables, with the GCS
+# locations as defaults. To run on a machine without GCS (RCC), stage the
+# stores under local directories mirroring the layout below and point these
+# at them; see rcc/README.md.
+_INPUTS_ROOT = os.environ.get(
+    "PIPELINE_INPUTS_ROOT", "gs://impactlab-data/coastal/local-scc-model/data/int"
+)
+_SCRATCH_ROOT = os.environ.get(
+    "PIPELINE_SCRATCH_ROOT", "gs://impactlab-data-scratch/inequality-pyciam"
+)
+_OUTPUTS_ROOT = os.environ.get(
+    "PIPELINE_OUTPUTS_ROOT", "gs://impactlab-data/gcp/outputs/coastal"
+)
 
 # =============================================================================
 # SLR PROCESSING
@@ -52,23 +67,17 @@ PATH_VLM_REQUESTER_PAYS = (
 # =============================================================================
 # INPUTS SURVIVING FROM THE REGIONAL SCC WORKFLOW (read-only)
 # =============================================================================
-PATH_SLIIDERS = AnyPath(
-    "gs://impactlab-data/coastal/local-scc-model/data/int/sliiders-ir.zarr"
-)
+PATH_SLIIDERS = AnyPath(_INPUTS_ROOT) / "sliiders-ir.zarr"
 PATHS_SURGE_LOOKUP = {
-    "seg": AnyPath(
-        "gs://impactlab-data/coastal/local-scc-model/data/int/surge-lookup/surge-lookup-seg.zarr"
-    ),
-    "seg_ir": AnyPath(
-        "gs://impactlab-data/coastal/local-scc-model/data/int/surge-lookup/surge-lookup-seg-ir.zarr"
-    ),
+    "seg": AnyPath(_INPUTS_ROOT) / "surge-lookup" / "surge-lookup-seg.zarr",
+    "seg_ir": AnyPath(_INPUTS_ROOT) / "surge-lookup" / "surge-lookup-seg-ir.zarr",
 }
 PATH_PARAMS = Path(__file__).parents[2] / "params.json"
 
 # =============================================================================
 # SCRATCH INTERMEDIATES
 # =============================================================================
-DIR_SCRATCH = AnyPath("gs://impactlab-data-scratch/inequality-pyciam")
+DIR_SCRATCH = AnyPath(_SCRATCH_ROOT)
 
 PATH_SLR = DIR_SCRATCH / "slr" / "ar6-tlim-1000samples.zarr"
 # Same layout as PATH_SLR but lsl_msl05 := gsl_msl05 + lsl_ncc_msl05
@@ -117,7 +126,7 @@ PATH_INTERMEDIATE = {
 # v3 outputs. The published v2 stores have incomplete noAdaptation cases
 # (see README) and stay in place so nothing changes under their readers; the
 # corrected outputs get new names.
-_DIR_OUTPUTS = AnyPath("gs://impactlab-data/gcp/outputs/coastal")
+_DIR_OUTPUTS = AnyPath(_OUTPUTS_ROOT)
 PATH_FINAL = {
     "fulladapt": _DIR_OUTPUTS / "pyCIAM_outputs_inequality_1000_ssp234_v3.zarr",
     "glocal": _DIR_OUTPUTS / "pyCIAM_outputs_inequality_1000_ssp234_v3_glocal.zarr",

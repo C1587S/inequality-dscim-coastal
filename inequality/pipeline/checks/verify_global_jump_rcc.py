@@ -1,6 +1,10 @@
 """
 RCC-local version of verify_global_jump.py
 
+RESOLVED (Sep 2026): the jump this script measures was an artifact of v2
+incompleteness, not a scenario effect. diagnose_uniform_gap_rcc.py has the
+closing evidence; see the README note.
+
 Run:
   source activate /project/cil/home_dirs/rcc/envs/python_r_general/
   python -u verify_global_jump_rcc.py

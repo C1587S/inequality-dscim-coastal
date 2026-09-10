@@ -22,7 +22,13 @@ PIPELINE_DIR = Path(__file__).resolve().parent
 
 def install_vendored_pyciam():
     """Install the pyciam/ checkout at the repo root so it wins over any
-    release installed in the environment. Call before importing pyCIAM."""
+    release installed in the environment. Call before importing pyCIAM.
+
+    Set PIPELINE_SKIP_PYCIAM_INSTALL=1 to skip, for environments where
+    pyCIAM is pre-installed - required for SLURM arrays, where hundreds of
+    concurrent pip installs into a shared env would race."""
+    if os.environ.get("PIPELINE_SKIP_PYCIAM_INSTALL"):
+        return
     import importlib
 
     subprocess.check_call(
@@ -44,6 +50,20 @@ class Cluster:
         self._cluster = None
 
     def start(self):
+        # PIPELINE_EXECUTOR=local runs on the machine itself (RCC nodes)
+        # instead of Dask Gateway; stages 4/5 on RCC bypass Cluster entirely
+        # via SLURM arrays, so this mode mainly serves stage 6 and probes
+        if os.environ.get("PIPELINE_EXECUTOR") == "local":
+            from distributed import Client, LocalCluster
+
+            n = min(self.n_workers, os.cpu_count() or 1)
+            self._cluster = LocalCluster(
+                n_workers=n, threads_per_worker=1, dashboard_address=None
+            )
+            self.client = Client(self._cluster)
+            print(f"local cluster: {n} workers")
+            return self.client
+
         from dask_gateway import Gateway
 
         gateway = Gateway()
@@ -198,6 +218,29 @@ def load_failed_tasks(name):
 
 def clear_failed_tasks(name):
     _failed_tasks_file(name).unlink(missing_ok=True)
+
+
+def unfinished_tasks_file(name):
+    return PIPELINE_DIR / f"{name}_unfinished.json"
+
+
+def save_unfinished(path, hit):
+    """Write probe results for SLURM-shard resume; an empty list clears
+    the file so the next sweep runs full."""
+    if not hit:
+        path.unlink(missing_ok=True)
+        return
+    with open(path, "w") as f:
+        json.dump([_jsonable(t) for t in hit], f)
+    print(f"unfinished list saved to {path}")
+
+
+def load_unfinished(path):
+    """Index pairs from the last probe, or None if the store was complete."""
+    if not path.exists():
+        return None
+    with open(path) as f:
+        return [tuple(t) for t in json.load(f)]
 
 
 def _print_progress(label, batch, n_batches, ok, err, done, total, t0, workers="?"):
