@@ -18,6 +18,9 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PIPELINE_DIR = Path(__file__).resolve().parent
+# probe/failed-task state; on RCC this points at scratch so run-critical
+# files never depend on /project having free inodes
+STATE_DIR = Path(os.environ.get("PIPELINE_STATE_DIR", str(PIPELINE_DIR)))
 
 
 def install_vendored_pyciam():
@@ -54,11 +57,21 @@ class Cluster:
         # instead of Dask Gateway; stages 4/5 on RCC bypass Cluster entirely
         # via SLURM arrays, so this mode mainly serves stage 6 and probes
         if os.environ.get("PIPELINE_EXECUTOR") == "local":
+            import tempfile
+
             from distributed import Client, LocalCluster
 
-            n = min(self.n_workers, os.cpu_count() or 1)
+            # sched_getaffinity sees the slurm cgroup's cores; cpu_count sees
+            # the whole node and would oversubscribe a shared one
+            affinity = getattr(os, "sched_getaffinity", None)
+            cores = len(affinity(0)) if affinity else (os.cpu_count() or 1)
+            n = min(self.n_workers, cores)
             self._cluster = LocalCluster(
-                n_workers=n, threads_per_worker=1, dashboard_address=None
+                n_workers=n,
+                threads_per_worker=1,
+                dashboard_address=None,
+                # spill to node-local disk, not the GPFS working directory
+                local_directory=tempfile.gettempdir(),
             )
             self.client = Client(self._cluster)
             print(f"local cluster: {n} workers")
@@ -197,7 +210,7 @@ def _jsonable(x):
 
 
 def _failed_tasks_file(name):
-    return PIPELINE_DIR / f"{name}_failed.json"
+    return STATE_DIR / f"{name}_failed.json"
 
 
 def save_failed_tasks(name, failed):
@@ -221,7 +234,7 @@ def clear_failed_tasks(name):
 
 
 def unfinished_tasks_file(name):
-    return PIPELINE_DIR / f"{name}_unfinished.json"
+    return STATE_DIR / f"{name}_unfinished.json"
 
 
 def save_unfinished(path, hit):
@@ -235,10 +248,29 @@ def save_unfinished(path, hit):
     print(f"unfinished list saved to {path}")
 
 
-def load_unfinished(path):
-    """Index pairs from the last probe, or None if the store was complete."""
+def load_unfinished(path, store=None):
+    """Index pairs from the last probe, or None if the store was complete.
+
+    A list older than the store's template is stale - the store was rebuilt
+    after the probe - and trusting it silently turns a run into a no-op, so
+    it is deleted with a note instead. The template's metadata file is
+    written once at creation and never touched by region writes, which
+    makes it the store's birth certificate."""
     if not path.exists():
         return None
+    if store is not None:
+        for meta in (".zmetadata", ".zgroup", "zarr.json"):
+            mpath = os.path.join(str(store), meta)
+            if os.path.exists(mpath):
+                if os.path.getmtime(path) < os.path.getmtime(mpath):
+                    print(
+                        "unfinished list predates the store template; "
+                        "deleting it (rerun --probe-only for a fresh one)",
+                        flush=True,
+                    )
+                    path.unlink()
+                    return None
+                break
     with open(path) as f:
         return [tuple(t) for t in json.load(f)]
 

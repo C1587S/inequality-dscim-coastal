@@ -56,7 +56,9 @@ SEED = 11222023
 DIR_SLR_AR6_GRIDDED_PUBLIC = (
     "gs://ar6-lsl-simulations-public-standard/gridded/full_sample_workflows"
 )
-DIR_SLR_AR6_RAW = AnyPath(
+# a plain string, wrapped in AnyPath by stage 1 at its one use site: only
+# the hub reads it, and importing config must not require a GCS client
+DIR_SLR_AR6_RAW = (
     "gs://impactlab-data/coastal/data/raw/slr/ar6/ar6/global/full_sample_workflows"
 )
 PATH_VLM_REQUESTER_PAYS = (
@@ -123,16 +125,20 @@ PATH_INTERMEDIATE = {
 # =============================================================================
 # FINAL OUTPUTS
 # =============================================================================
-# v3 outputs. The published v2 stores have incomplete noAdaptation cases
-# (see README) and stay in place so nothing changes under their readers; the
-# corrected outputs get new names.
-_DIR_OUTPUTS = AnyPath(_OUTPUTS_ROOT)
-PATH_FINAL = {
-    "fulladapt": _DIR_OUTPUTS / "pyCIAM_outputs_inequality_1000_ssp234_v3.zarr",
-    "glocal": _DIR_OUTPUTS / "pyCIAM_outputs_inequality_1000_ssp234_v3_glocal.zarr",
-    "global": _DIR_OUTPUTS
-    / "pyCIAM_outputs_inequality_1000_ssp234_v3_global_income_climate.zarr",
+# Final stores live in one directory holding only the current complete
+# generation, with names that say what the scenario is: the two experiment
+# rows name both axes of the design, so they read as siblings, not as a
+# base and its variant. The legacy stores keep their names at the parent
+# level and nothing changes under their readers. GCS gets mirrored after
+# the runs; until then the outputs root points at RCC (see rcc/rcc_env.sh).
+STORE_NAMES = {
+    "fulladapt": "fulladapt",
+    "glocal": "global_income_local_climate",
+    "global": "global_income_global_climate",
 }
+_DIR_OUTPUTS = AnyPath(_OUTPUTS_ROOT)
+_DIR_FINAL = _DIR_OUTPUTS / "inequality-scenarios"
+PATH_FINAL = {s: _DIR_FINAL / f"{STORE_NAMES[s]}.zarr" for s in SCENARIOS}
 
 # Views of the final store: gadmid-labelled, then subset to the original
 # run's regions, which drops ~1,500 inland-water ones. The published glocal

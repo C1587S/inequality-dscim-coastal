@@ -31,7 +31,14 @@ Run on the hub:
 """
 
 import argparse
+import resource
 import time
+import warnings
+from collections import deque
+
+# the pinned pyCIAM triggers xarray FutureWarnings we can't act on, and in
+# a shard log they bury the progress lines
+warnings.filterwarnings("ignore", category=FutureWarning)
 
 import numpy as np
 import xarray as xr
@@ -53,6 +60,7 @@ from config import (  # noqa: E402
     N_SAMPLES_TOTAL,
     N_WORKERS,
     OPT_SAMPLE_CHUNKSIZE,
+    SEG_CHUNKSIZE,
     PATH_TMP,
     SCENARIOS,
     SEG_VAR,
@@ -70,49 +78,113 @@ def run_optimize_case(seg_ir, **kwargs):
     return optimize_case(seg_ir, **kwargs)
 
 
-def run_shard(k, n, segs, samp_groups, tmp_path, unfinished_file, task_kwargs):
-    """One SLURM array element: segments k::n with all their sample groups,
-    run serially, so elements never share a chunk. Before optimizing a
-    segment, its own stage-4 npv is checked for nulls: the case selection
-    sums sibling npv with skipna (pyCIAM/run.py:842), so optimizing over
-    holes would silently skew the whole segment. A prior --probe-only run
-    leaves an unfinished list; when present, only those tasks run."""
+def parent_segment(seg_ir):
+    return "_".join(str(seg_ir).split("_")[:2])
+
+
+def complete_segments(tmp_path, segs):
+    """Segments whose stage-4 calc is complete for every sibling seg_ir and
+    sample, from one bulk read of the npv and costs probe points."""
     ds = xr.open_zarr(str(tmp_path))
-    todo = load_unfinished(unfinished_file)
+    npv = ds.npv.isel(case=0, scenario=0, ssp=0, iam=0, drop=True)
+    costs = ds.costs.isel(
+        case=0, costtype=0, scenario=0, year=-1, ssp=0, iam=0, drop=True
+    )
+    bad = (npv.isnull() | costs.isnull()).any("sample").compute()
+    holey = {
+        parent_segment(s)
+        for s, b in zip(bad[SEG_VAR].values, bad.values)
+        if b
+    }
+    return {parent_segment(s) for s in segs} - holey
+
+
+def run_shard(k, n, segs, samp_groups, tmp_path, unfinished_file, task_kwargs,
+              complete=None):
+    """One SLURM array element, sharded by CHUNK COLUMN, not by seg_ir:
+    the store's seg chunks span SEG_CHUNKSIZE seg_irs, so write
+    exclusivity exists at chunk level only. Striding raw seg_irs put the
+    two seg_irs of every chunk into adjacent elements, whose concurrent
+    read-modify-writes silently reverted ~half of all optimalfixed cells
+    to NaN (36,811 of 78,856 groups, glocal, Sep 2026). An element owns
+    whole chunk columns and runs their sample groups serially, so no two
+    elements can ever write the same chunk.
+
+    The stage-4 guard works at whole-segment level: the case selection sums
+    npv across a segment's sibling regions with skipna (pyCIAM/run.py:842),
+    so one holey sibling silently skews every region of the segment, and a
+    region-level check would miss it. Without --complete-only, a segment
+    with holey siblings is refused loudly. With it, `complete` carries the
+    calc-complete segment set and everything outside is skipped quietly, so
+    a partial stage 4 yields a coherent slice of whole segments.
+
+    A prior --probe-only run leaves an unfinished list; when present, only
+    those tasks run."""
+    ds = xr.open_zarr(str(tmp_path))
+    by_parent = {}
+    for s in segs:
+        by_parent.setdefault(parent_segment(s), []).append(s)
+    todo = load_unfinished(unfinished_file, store=tmp_path)
     if todo is not None:
-        mine = [(i, j) for i, j in todo if i % n == k]
+        mine = [(i, j) for i, j in todo if (i // SEG_CHUNKSIZE) % n == k]
         print(f"shard {k}/{n}: {len(mine)} unfinished tasks from the probe")
     else:
-        mine = [(i, j) for i in range(k, len(segs), n) for j in range(len(samp_groups))]
+        mine = [(i, j) for i in range(len(segs))
+                if (i // SEG_CHUNKSIZE) % n == k
+                for j in range(len(samp_groups))]
         print(f"shard {k}/{n}: {len(mine)} tasks, full sweep with store check")
-    n_err = 0
+    checked = {}
+    n_err = n_skip = n_run = 0
     t0 = time.time()
+    # trailing-window rate; see 04_calc_cases.run_shard
+    recent = deque([t0], maxlen=21)
     for count, (i, j) in enumerate(mine):
         seg = segs[i]
-        if count == 0 or mine[count - 1][0] != i:
+        parent = parent_segment(seg)
+        if complete is not None:
+            if parent not in complete:
+                n_skip += 1
+                continue
+        elif parent not in checked:
             n_null = int(
-                ds.npv.sel({SEG_VAR: seg})
+                ds.npv.sel({SEG_VAR: by_parent[parent]})
                 .drop_sel(case="optimalfixed")
                 .isnull()
                 .sum()
             )
+            checked[parent] = n_null == 0
             if n_null:
-                n_err += 1
-                print(f"{seg}: {n_null} null calc cells, refusing to optimize")
-                continue
+                print(f"{parent}: {n_null} null calc cells among its regions, "
+                      "refusing its tasks")
+        if complete is None and not checked[parent]:
+            n_err += 1
+            continue
         try:
             run_optimize_case(
                 seg, quantiles=samp_groups[j], check=todo is None, **task_kwargs
             )
+            n_run += 1
         except Exception as e:
             n_err += 1
             print(f"task ({seg}, group {j}) failed: {str(e)[:200]}")
-        if (count + 1) % 40 == 0 or count + 1 == len(mine):
-            print(f"{count + 1}/{len(mine)} | {(time.time() - t0) / 60:.1f} min", flush=True)
+        recent.append(time.time())
+        elapsed = time.time() - t0
+        rate = (recent[-1] - recent[0]) / (len(recent) - 1)
+        ru = resource.getrusage(resource.RUSAGE_SELF)
+        cpu = 100 * (ru.ru_utime + ru.ru_stime) / elapsed
+        eta = rate * (len(mine) - count - 1)
+        print(
+            f"{count + 1}/{len(mine)} ({seg}, group {j}) | {elapsed / 60:.1f} min | "
+            f"{rate:.0f} s/task | cpu {cpu:.0f}% | ~{eta / 60:.0f} min left",
+            flush=True,
+        )
+    summary = f"shard {k}/{n}: ran {n_run}"
+    if n_skip:
+        summary += f", skipped {n_skip} outside the complete slice"
+    print(summary + f" in {(time.time() - t0) / 60:.1f} min")
     if n_err:
         raise SystemExit(f"shard {k}/{n}: {n_err} failures; fix stage 4 holes "
                          "if reported, then resubmit this element")
-    print(f"shard {k}/{n} done in {(time.time() - t0) / 60:.1f} min")
 
 
 def main():
@@ -127,6 +199,12 @@ def main():
         "--probe-only", action="store_true",
         help="count unfinished groups, save them for shard resume, and exit "
         "nonzero if any",
+    )
+    parser.add_argument(
+        "--complete-only", action="store_true",
+        help="shard mode: optimize only segments whose stage-4 calc is "
+        "fully complete, skipping the rest quietly; a partial stage 4 then "
+        "yields a coherent slice of whole segments",
     )
     args = parser.parse_args()
 
@@ -150,6 +228,8 @@ def main():
         output_path=str(tmp_path),
         seg_var=SEG_VAR,
         eps=1,
+        # pyCIAM defaults this to {}, which zarr rejects for local paths
+        storage_options=None,
     )
 
     def probe_indices():
@@ -184,7 +264,13 @@ def main():
 
     if args.shard:
         k, n = (int(x) for x in args.shard.split("/"))
-        run_shard(k, n, segs, samp_groups, tmp_path, unfinished_file, task_kwargs)
+        complete = None
+        if args.complete_only:
+            print("probing stage-4 completeness per segment (bulk read)")
+            complete = complete_segments(tmp_path, segs)
+            print(f"{len(complete)} segments calc-complete")
+        run_shard(k, n, segs, samp_groups, tmp_path, unfinished_file,
+                  task_kwargs, complete)
         return
 
     cluster = Cluster(n_workers)

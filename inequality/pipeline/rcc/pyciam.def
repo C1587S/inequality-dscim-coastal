@@ -1,0 +1,35 @@
+# Apptainer container for the pipeline's RCC stages. pyCIAM and every
+# python dependency are baked in, so nothing depends on a shared conda env.
+#
+# The %files paths are relative to the directory you build FROM, so the
+# build must run from the repo root or it dies on the first %files line
+# with "cannot stat". It also needs the pyciam checkout cloned at the repo
+# root first; that clone is not part of the repo (see rcc/README.md,
+# one-time setup). Then:
+#   cd /path/to/the/repo
+#   apptainer build pyciam.sif inequality/pipeline/rcc/pyciam.def
+# and move pyciam.sif where rcc_env.sh's CONTAINER points, next to the
+# geoclaw container:
+#   /project/cil/home_dirs/rcc/containers/
+
+Bootstrap: docker
+From: condaforge/miniforge3:24.11.3-0
+
+%files
+    inequality/pipeline/rcc/environment.yml /opt/environment.yml
+    pyciam /opt/pyciam
+
+%post
+    mamba env update -n base -f /opt/environment.yml
+    # --no-deps on purpose, twice: rhg-compute-tools would otherwise drag a
+    # full jupyter/gateway stack for the two functions pyCIAM imports from
+    # it, and pyCIAM's own deps are already pinned by environment.yml
+    pip install --no-deps rhg-compute-tools
+    pip install --no-deps /opt/pyciam
+    mamba clean -afy
+
+%environment
+    export PIPELINE_SKIP_PYCIAM_INSTALL=1
+
+%runscript
+    exec "$@"

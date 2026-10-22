@@ -130,6 +130,8 @@ def main():
             mc_dim=MC_DIM,
             diaz_inputs=False,
             eps=1,
+            # pyCIAM defaults this to {}, which zarr rejects for local paths
+            storage_options=None,
         )
 
     t0 = time.time()

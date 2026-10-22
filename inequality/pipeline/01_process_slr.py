@@ -114,7 +114,7 @@ def load_local_and_global(scenarios, workflows, n_per_wf):
         local.append(quantile_draws(lsl, quants, wf, tlim))
         gsl = to_meters(
             xr.open_dataset(
-                str(DIR_SLR_AR6_RAW / wf / f"{tlim}win0.25" / "total-workflow.nc")
+                f"{DIR_SLR_AR6_RAW}/{wf}/{tlim}win0.25/total-workflow.nc"
                 .replace("gs://", "/gcs/")
             )
         )

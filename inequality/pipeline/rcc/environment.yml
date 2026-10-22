@@ -1,9 +1,8 @@
-# Conda env for running pipeline stages on RCC. Build once:
-#   mamba env create -f environment.yml -p /project/cil/home_dirs/rcc/envs/pyciam
-# then install the vendored pyCIAM from a clone of this repo:
-#   pip install --no-deps -e /path/to/inequality-dscim-coastal/pyciam
-# rhg-compute-tools is installed without deps on purpose; the pieces pyCIAM
-# imports from it need only dask and xarray, which are here.
+# Python dependencies for the pipeline's RCC stages. Consumed by the
+# container build (pyciam.def), which also bakes in the vendored pyCIAM
+# and rhg-compute-tools; see rcc/README.md. rhg-compute-tools is not in a
+# pip block here because it needs --no-deps, and conda-env treats every
+# pip line as a requirement, so flags fail the build.
 name: pyciam
 channels:
   - conda-forge
@@ -20,7 +19,18 @@ dependencies:
   - pint
   - pint-xarray
   - cloudpathlib
+  # the module-level import closure of rhg_compute_tools.xarray (installed
+  # --no-deps in the container): its utils module imports git and toolz.
+  # toolz arrives with dask anyway; listed so nothing rests on transitivity.
+  - gitpython
+  - toolz
+  # xarray accelerators imported at call time, invisible to import smoke
+  # tests. bottleneck is hard-required: pyCIAM's calc path uses ffill/bfill
+  # (run.py:197-220,534), which raise without it. flox is the groupby
+  # engine the hub had; without it the stage-6 aggregation falls back to a
+  # much slower path. Consciously excluded: numbagg (clean fallback, drags
+  # numba), cytoolz (pure micro-perf), netcdf4/h5netcdf (RCC stages touch
+  # only zarr).
+  - bottleneck
+  - flox
   - pip
-  - pip:
-      - --no-deps
-      - rhg-compute-tools
